@@ -1,0 +1,97 @@
+## ---------------------------------------------------------------------------
+## Figure X — Direction of BAFF / BAFF-R transcript regulation relative to
+## healthy controls, in GBS, SLE and MS (n = 23 per cohort).
+##
+## Diverging 100% stacked bars; numerals are absolute patient counts.
+## Wilson 95% CIs and between-cohort tests live in the results table, not here.
+##
+## Tanmoy Nandi — thesis, RT-qPCR innate-immune panel
+## ---------------------------------------------------------------------------
+
+library(dplyr)
+library(tidyr)
+library(forcats)
+library(ggplot2)
+
+## ---- Style ---------------------------------------------------------------
+pal_cohort <- c(HC = "#898781", GBS = "#2a78d6", MS = "#1baf7a", SLE = "#eda100")
+col_up     <- "#c0392b"
+col_down   <- "#3b6ea5"
+n_per_group <- 23
+
+## ---- Data ----------------------------------------------------------------
+## NOTE the correct HGNC symbols: BAFF = TNFSF13B, BAFF-R = TNFRSF13C.
+dat <- tibble::tribble(
+  ~gene,                ~cohort, ~up, ~down,
+  "BAFF (TNFSF13B)",    "GBS",    12,    11,
+  "BAFF (TNFSF13B)",    "SLE",    21,     2,
+  "BAFF (TNFSF13B)",    "MS",     14,     9,
+  "BAFF-R (TNFRSF13C)", "GBS",     9,    14,
+  "BAFF-R (TNFRSF13C)", "SLE",     4,    19,
+  "BAFF-R (TNFRSF13C)", "MS",      5,    18
+) |>
+  mutate(n = up + down)
+
+stopifnot(all(dat$n == n_per_group))   # integrity check
+
+## Long form, with downregulated counts pushed to the negative side of zero.
+## fct_rev() on cohort so GBS sits at the top of each facet.
+plot_dat <- dat |>
+  pivot_longer(c(up, down), names_to = "direction", values_to = "k") |>
+  mutate(
+    gene      = factor(gene, levels = c("BAFF (TNFSF13B)", "BAFF-R (TNFRSF13C)")),
+    cohort    = fct_rev(factor(cohort, levels = c("GBS", "SLE", "MS"))),
+    direction = factor(direction, levels = c("down", "up"),
+                       labels = c("Downregulated", "Upregulated")),
+    pct       = 100 * k / n,
+    signed    = ifelse(direction == "Downregulated", -pct, pct),
+    lab_x     = signed + ifelse(direction == "Downregulated", -2.5, 2.5),
+    lab_hjust = ifelse(direction == "Downregulated", 1, 0)
+  )
+
+## ---- Figure --------------------------------------------------------------
+p <- ggplot(plot_dat, aes(x = signed, y = cohort, fill = direction)) +
+  geom_col(width = 0.62, colour = "white", linewidth = 0.4) +
+  geom_text(aes(x = lab_x, label = k, hjust = lab_hjust, colour = direction),
+            size = 2.9, show.legend = FALSE) +
+  geom_vline(xintercept = 0, colour = "grey25", linewidth = 0.35) +
+  facet_wrap(~ gene, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = c(Downregulated = col_down, Upregulated = col_up)) +
+  scale_colour_manual(values = c(Downregulated = col_down, Upregulated = col_up)) +
+  scale_x_continuous(limits = c(-108, 108),
+                     breaks = seq(-100, 100, 50),
+                     labels = function(x) abs(x),
+                     expand = c(0, 0)) +
+  ## ← / → are written as unicode escapes so the arrows survive being
+  ## sourced under a non-UTF-8 locale.
+  labs(x = "Patients (%)   \u2190 downregulated  |  upregulated \u2192",
+       y = NULL, fill = NULL) +
+  theme_classic(base_size = 9) +
+  theme(
+    text            = element_text(colour = "black"),
+    legend.position = "bottom",
+    legend.key.size = unit(0.35, "cm"),
+    legend.margin   = margin(t = -4),
+    strip.background = element_blank(),
+    strip.text       = element_text(face = "bold", hjust = 0, size = 9,
+                                    margin = margin(b = 3)),
+    panel.spacing.y  = unit(10, "pt"),
+    axis.line.y  = element_blank(),
+    axis.ticks.y = element_blank(),
+    ## Cohort colours on the y-axis labels, bottom-to-top. ggplot2 emits a
+    ## "vectorized input to element_text()" note for this; it is cosmetic and
+    ## the output is correct. For a warning-free version, install ggtext and
+    ## swap in element_markdown() with the colours written into the labels.
+    axis.text.y  = element_text(face = "bold",
+                                colour = pal_cohort[c("MS", "SLE", "GBS")]),
+    axis.title.x = element_text(margin = margin(t = 6))
+  )
+
+## ---- Export --------------------------------------------------------------
+## Half-column width. Bump to width = 7.0 for a full-width thesis page.
+ggsave("Fig_BAFF_BAFFR_direction.pdf", p,
+       width = 5.4, height = 3.5, device = cairo_pdf)
+ggsave("Fig_BAFF_BAFFR_direction.tiff", p,
+       width = 5.4, height = 3.5, dpi = 600, compression = "lzw")
+
+sessionInfo()
