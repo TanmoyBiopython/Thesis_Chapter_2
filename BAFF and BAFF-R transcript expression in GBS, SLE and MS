@@ -1,0 +1,244 @@
+## ===========================================================================
+## Figure 1 - BAFF and BAFF-R transcript expression in GBS, SLE and MS
+##            versus healthy controls.
+##
+## This version is set up for hand-editing in Inkscape:
+##   * primary output is SVG written by svglite, which keeps every label as a
+##     real <text> element rather than converting it to outlines, so the text
+##     stays selectable and re-typable in Inkscape;
+##   * axis titles are plain strings, not plotmath expressions, so each one
+##     arrives as a single text object instead of a scatter of fragments;
+##   * one font family is set for the whole figure via FONT below.
+##
+## Input : qRTPCR_analysis Final.xlsx, sheet "Delta Ct"
+## Output: Fig1_BAFF_BAFFR_expression.svg   <- edit this one
+##         Fig1_BAFF_BAFFR_expression.pdf   <- for direct LaTeX/Word placement
+##         Fig1_BAFF_BAFFR_expression.tiff  <- 600 dpi raster, if a journal
+##                                             or the university demands it
+##         Table_BAFF_BAFFR_descriptives.csv, Table_BAFF_BAFFR_posthoc.csv
+##
+## Tanmoy Nandi - thesis, RT-qPCR innate immune panel
+## ===========================================================================
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(rstatix)
+library(ggbeeswarm)
+library(svglite)
+library(systemfonts)
+
+
+## ---------------------------------------------------------------------------
+## 1. Configuration
+## ---------------------------------------------------------------------------
+
+XLSX <- "qRTPCR_analysis Final.xlsx"
+OUT  <- "Fig1_BAFF_BAFFR_expression"
+
+## Inkscape must have this font installed or it will substitute one on open,
+## and svglite writes an empty font-family into the SVG if it cannot resolve
+## the name at all.  So resolve it against the fonts actually present and
+## fall back in order of preference.  "Liberation Sans" is metric-compatible
+## with Arial and is the usual Linux stand-in.
+FONT_PREFERENCE <- c("Arial", "Helvetica", "Liberation Sans",
+                     "DejaVu Sans", "sans")
+available <- systemfonts::system_fonts()$family
+FONT <- FONT_PREFERENCE[FONT_PREFERENCE %in% c(available, "sans")][1]
+message("Font family used for the figure: ", FONT)
+
+W <- 7.0     # inches
+H <- 3.8
+BASE_SIZE <- 9
+
+pal <- c(HC = "#898781", GBS = "#2a78d6", SLE = "#eda100", MS = "#1baf7a")
+grp_levels <- c("HC", "GBS", "SLE", "MS")
+
+## QC Note 9 of the source workbook: HC-33 BAFF-R rests on a single implausible
+## well (G02 = 13.26 Cq where BAFF-R runs ~25-34) and the workbook recommends
+## excluding it. It is a calibrator sample, so retaining it shifts every
+## disease sample's BAFF-R fold change. Set FALSE to reproduce the workbook.
+DROP_HC33 <- TRUE
+
+
+## ---------------------------------------------------------------------------
+## 2. Read and reshape
+## ---------------------------------------------------------------------------
+
+dat <- read_excel(XLSX, sheet = "Delta Ct") |>
+  filter(!is.na(Sample), !grepl("^HC Group", Sample)) |>
+  transmute(
+    sample   = Sample,
+    group    = factor(sub("^([A-Za-z]+).*$", "\\1", Sample), levels = grp_levels),
+    BAFF     = `BAFF ΔCt`,
+    `BAFF-R` = `BAFFR ΔCt`
+  ) |>
+  pivot_longer(c(BAFF, `BAFF-R`), names_to = "gene", values_to = "dCt") |>
+  mutate(gene = factor(gene, levels = c("BAFF", "BAFF-R")))
+
+stopifnot(all(table(dat$group, dat$gene) == 23))
+
+if (DROP_HC33) {
+  dat <- filter(dat, !(sample == "HC-33" & gene == "BAFF-R"))
+}
+
+
+## ---------------------------------------------------------------------------
+## 3. log2 fold change versus the healthy-control group mean
+##
+## dCt = mean Ct(target) - mean Ct(B2M).  dCt is already a log2-scale
+## quantity, so group comparisons are run on dCt itself; log2FC is a fixed
+## per-gene shift of dCt and is used for display and for reporting fold
+## changes only.
+## ---------------------------------------------------------------------------
+
+calibrator <- dat |>
+  filter(group == "HC") |>
+  group_by(gene) |>
+  summarise(hc_mean_dCt = mean(dCt), n_hc = n(), .groups = "drop")
+
+print(calibrator)
+
+dat <- dat |>
+  left_join(calibrator, by = "gene") |>
+  mutate(log2FC = -(dCt - hc_mean_dCt),
+         FC     = 2 ^ log2FC)
+
+
+## ---------------------------------------------------------------------------
+## 4. Descriptives and tests
+## ---------------------------------------------------------------------------
+
+descriptives <- dat |>
+  group_by(gene, group) |>
+  summarise(n             = n(),
+            median_FC     = median(FC),
+            q1_FC         = quantile(FC, 0.25),
+            q3_FC         = quantile(FC, 0.75),
+            median_log2FC = median(log2FC),
+            .groups = "drop")
+print(as.data.frame(descriptives), digits = 3)
+write.csv(descriptives, "Table_BAFF_BAFFR_descriptives.csv", row.names = FALSE)
+
+omnibus <- dat |> group_by(gene) |> kruskal_test(dCt ~ group)     |> ungroup()
+effsize <- dat |> group_by(gene) |> kruskal_effsize(dCt ~ group)  |> ungroup()
+posthoc <- dat |> group_by(gene) |>
+  dunn_test(dCt ~ group, p.adjust.method = "BH") |> ungroup()
+
+print(omnibus); print(effsize)
+print(as.data.frame(posthoc), digits = 3)
+write.csv(posthoc, "Table_BAFF_BAFFR_posthoc.csv", row.names = FALSE)
+
+
+## ---------------------------------------------------------------------------
+## 5. Annotation layers
+## ---------------------------------------------------------------------------
+
+## Significance brackets: only contrasts surviving BH adjustment are drawn.
+brackets <- posthoc |>
+  filter(p.adj < 0.05) |>
+  mutate(x    = as.numeric(factor(group1, grp_levels)),
+         xend = as.numeric(factor(group2, grp_levels)),
+         label = ifelse(p.adj < 0.001, "q < 0.001", sprintf("q = %.3f", p.adj))) |>
+  group_by(gene) |>
+  mutate(y = 3.4 + 0.85 * (row_number() - 1)) |>
+  ungroup()
+
+## Omnibus result, one per panel.
+omnibus_lab <- omnibus |>
+  left_join(select(effsize, gene, effsize), by = "gene") |>
+  mutate(label = sprintf("Kruskal-Wallis H(%d) = %.2f, p = %s\neta squared = %.3f",
+                         df, statistic,
+                         ifelse(p < 0.001, "< 0.001", sprintf("%.3f", p)),
+                         effsize))
+
+## Group sizes, printed under each distribution.
+n_lab <- count(dat, gene, group) |> mutate(label = paste0("n = ", n))
+
+## Fold-change equivalent beside each log2 break.
+fc_label <- function(x) {
+  sprintf("%d  (%s)", x, ifelse(x >= 0, paste0(2 ^ x, "x"),
+                                paste0("1/", 2 ^ (-x), "x")))
+}
+
+
+## ---------------------------------------------------------------------------
+## 6. Plot
+##
+## Layer order below is the layer order in the SVG, which is what Inkscape's
+## XML editor and Objects panel will show, top of this list = bottom of the
+## stack:
+##   1 zero reference line   2 violins   3 boxes   4 points
+##   5 brackets   6 bracket labels   7 group sizes   8 omnibus text
+## ---------------------------------------------------------------------------
+
+p <- ggplot(dat, aes(x = group, y = log2FC)) +
+
+  geom_hline(yintercept = 0, linetype = "22",
+             colour = "grey55", linewidth = 0.35) +
+
+  geom_violin(aes(fill = group), colour = NA, alpha = 0.20,
+              width = 0.9, trim = TRUE) +
+
+  geom_boxplot(aes(colour = group), fill = NA, width = 0.30,
+               outlier.shape = NA, linewidth = 0.5) +
+
+  ## shape 16 is a plain filled circle: one <circle> per patient in the SVG,
+  ## with no separate stroke path to clean up afterwards
+  geom_quasirandom(aes(colour = group), width = 0.16, size = 1.1,
+                   shape = 16, alpha = 0.85) +
+
+  geom_segment(data = brackets,
+               aes(x = x, xend = xend, y = y, yend = y),
+               inherit.aes = FALSE, linewidth = 0.35, colour = "grey25") +
+
+  geom_text(data = brackets,
+            aes(x = (x + xend) / 2, y = y + 0.18, label = label),
+            inherit.aes = FALSE, size = 2.5, colour = "grey20", family = FONT) +
+
+  geom_text(data = n_lab, aes(x = group, y = -6.5, label = label),
+            inherit.aes = FALSE, size = 2.3, colour = "grey35", family = FONT) +
+
+  geom_text(data = omnibus_lab, aes(x = 0.55, y = 7.1, label = label),
+            inherit.aes = FALSE, hjust = 0, vjust = 1, size = 2.4,
+            colour = "grey25", lineheight = 1.1, family = FONT) +
+
+  facet_wrap(~ gene, nrow = 1) +
+  scale_fill_manual(values = pal, guide = "none") +
+  scale_colour_manual(values = pal, guide = "none") +
+  scale_y_continuous(breaks = seq(-6, 6, 2), labels = fc_label) +
+  coord_cartesian(ylim = c(-6.9, 7.2), clip = "off") +
+
+  labs(x = NULL, y = "log2 fold change vs healthy controls") +
+
+  theme_classic(base_size = BASE_SIZE, base_family = FONT) +
+  theme(
+    strip.background = element_blank(),
+    strip.text       = element_text(face = "bold", size = 9.5),
+    axis.text.x      = element_text(face = "bold", size = 9),
+    panel.spacing.x  = unit(14, "pt"),
+    plot.margin      = margin(6, 6, 4, 6)
+  )
+
+
+## ---------------------------------------------------------------------------
+## 7. Export
+##
+## svglite writes text as <text>, so Inkscape opens the labels as editable
+## strings.  fix_text_size = FALSE keeps ggplot's own point sizes instead of
+## svglite's fixed-size default, which is what makes the SVG match the PDF.
+##
+## In Inkscape: File > Open (not Import) for a plain SVG.  If you do use
+## Import, choose "Include SVG image as editable object", never "Embed".
+## ---------------------------------------------------------------------------
+
+ggsave(paste0(OUT, ".svg"), p, width = W, height = H,
+       device = svglite::svglite, fix_text_size = FALSE, bg = "white")
+
+ggsave(paste0(OUT, ".pdf"), p, width = W, height = H, device = cairo_pdf)
+
+ggsave(paste0(OUT, ".tiff"), p, width = W, height = H,
+       dpi = 600, compression = "lzw")
+
+sessionInfo()
