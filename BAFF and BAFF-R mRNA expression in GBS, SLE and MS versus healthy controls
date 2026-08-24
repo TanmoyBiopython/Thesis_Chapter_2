@@ -1,0 +1,274 @@
+## ===========================================================================
+##  BAFF and BAFF-R mRNA expression in GBS, SLE and MS versus healthy controls
+##  Violin + box + individual points, with Kruskal-Wallis and Dunn/BH results
+##
+##  HOW TO RUN IN RSTUDIO
+##  1. Put this file in the same folder as your Excel workbook.
+##  2. Open it in RStudio.
+##  3. Session > Set Working Directory > To Source File Location.
+##  4. Click Source (or press Ctrl+Shift+Enter / Cmd+Shift+Return).
+##
+##  The script installs any package it needs, finds the workbook on its own,
+##  draws the figure in the Plots pane, and writes SVG, PDF and TIFF files
+##  next to itself.
+##
+##  Tanmoy Nandi - thesis, RT-qPCR innate immune panel
+## ===========================================================================
+
+
+## ---------------------------------------------------------------------------
+##  1. Packages
+## ---------------------------------------------------------------------------
+
+needed <- c("readxl", "dplyr", "tidyr", "ggplot2", "rstatix", "ggbeeswarm")
+missing <- needed[!needed %in% rownames(installed.packages())]
+if (length(missing)) {
+  message("Installing: ", paste(missing, collapse = ", "))
+  install.packages(missing, repos = "https://cloud.r-project.org")
+}
+invisible(lapply(needed, library, character.only = TRUE))
+
+## Optional. svglite gives an SVG whose text stays editable in Inkscape.
+## Without it the script still runs and simply skips the SVG file.
+HAVE_SVGLITE <- requireNamespace("svglite", quietly = TRUE)
+if (!HAVE_SVGLITE) message("svglite not installed - SVG output will be skipped.")
+
+
+## ---------------------------------------------------------------------------
+##  2. Settings you may want to change
+## ---------------------------------------------------------------------------
+
+OUT  <- "Figure_BAFF_BAFFR_expression"   # output file name, no extension
+W    <- 7.0                              # width in inches
+H    <- 3.8                              # height in inches
+BASE <- 9                                # base font size in points
+
+## Cohort colours. Keep these identical across every figure in the thesis.
+pal <- c(HC = "#898781", GBS = "#2a78d6", SLE = "#eda100", MS = "#1baf7a")
+grp <- c("HC", "GBS", "SLE", "MS")       # left-to-right order on the x axis
+
+## Font. Arial on Windows and macOS, Liberation Sans on most Linux machines.
+## The first one actually installed is used.
+FONT <- {
+  prefs <- c("Arial", "Helvetica", "Liberation Sans", "DejaVu Sans", "sans")
+  have  <- tryCatch(systemfonts::system_fonts()$family, error = function(e) character())
+  prefs[prefs %in% c(have, "sans")][1]
+}
+message("Font in use: ", FONT)
+
+## HC-33 has a quality-control flag on its BAFF-R triplicate (one implausible
+## well, G02 at 13.26 Cq where BAFF-R runs ~25-34 Cq). It is a calibrator
+## sample, so keeping it shifts every patient's BAFF-R fold change.
+## TRUE  = drop it, which is the primary analysis.
+## FALSE = keep it, which reproduces the original workbook.
+DROP_HC33 <- TRUE
+
+
+## ---------------------------------------------------------------------------
+##  3. Find and read the workbook
+## ---------------------------------------------------------------------------
+##  Either workbook works. The supplementary file is tried first; if it is not
+##  in the folder, the original qRT-PCR export is used instead.
+
+read_data <- function() {
+  supp <- "Chapter 2 suppli_BAFF and BAFFR.xlsx"
+  src  <- "qRTPCR_analysis Final.xlsx"
+
+  if (file.exists(supp)) {
+    message("Reading: ", supp)
+    raw <- readxl::read_excel(supp, sheet = "Data (per sample)", skip = 5)
+    out <- data.frame(
+      sample = raw[["Sample"]],
+      group  = raw[["Group"]],
+      BAFF   = suppressWarnings(as.numeric(raw[["BAFF dCt"]])),
+      BAFFR  = suppressWarnings(as.numeric(raw[["BAFF-R dCt (source)"]]))
+    )
+  } else if (file.exists(src)) {
+    message("Reading: ", src)
+    raw <- readxl::read_excel(src, sheet = "Delta Ct")
+    raw <- raw[!is.na(raw[["Sample"]]) &
+               !grepl("^HC Group", raw[["Sample"]]), ]
+    out <- data.frame(
+      sample = raw[["Sample"]],
+      group  = sub("^([A-Za-z]+).*$", "\\1", raw[["Sample"]]),
+      BAFF   = suppressWarnings(as.numeric(raw[["BAFF ΔCt"]])),
+      BAFFR  = suppressWarnings(as.numeric(raw[["BAFFR ΔCt"]]))
+    )
+  } else {
+    stop("Neither workbook was found in:\n  ", getwd(),
+         "\nPut '", supp, "' or '", src, "' in this folder, or use\n",
+         "Session > Set Working Directory > To Source File Location.",
+         call. = FALSE)
+  }
+  out[!is.na(out$sample), ]
+}
+
+raw <- read_data()
+
+dat <- raw |>
+  dplyr::mutate(group = factor(group, levels = grp)) |>
+  tidyr::pivot_longer(c(BAFF, BAFFR), names_to = "gene", values_to = "dCt") |>
+  dplyr::mutate(gene = factor(gene, levels = c("BAFF", "BAFFR"),
+                              labels = c("BAFF", "BAFF-R"))) |>
+  dplyr::filter(!is.na(dCt), !is.na(group))
+
+if (DROP_HC33) {
+  dat <- dplyr::filter(dat, !(sample == "HC-33" & gene == "BAFF-R"))
+}
+
+## log2 fold change against the healthy-control group mean, per gene
+dat <- dat |>
+  dplyr::group_by(gene) |>
+  dplyr::mutate(log2FC = -(dCt - mean(dCt[group == "HC"]))) |>
+  dplyr::ungroup()
+
+cat("\nSamples per group and gene:\n")
+print(table(dat$group, dat$gene))
+stopifnot(nrow(dat) > 0)
+
+
+## ---------------------------------------------------------------------------
+##  4. Statistics
+## ---------------------------------------------------------------------------
+##  dCt is already a log2 quantity, so the tests run on dCt itself. log2FC is
+##  the same numbers shifted by a constant and gives an identical result.
+
+omnibus <- dat |> dplyr::group_by(gene) |>
+  rstatix::kruskal_test(dCt ~ group) |> dplyr::ungroup()
+
+effsize <- dat |> dplyr::group_by(gene) |>
+  rstatix::kruskal_effsize(dCt ~ group) |> dplyr::ungroup()
+
+posthoc <- dat |> dplyr::group_by(gene) |>
+  rstatix::dunn_test(dCt ~ group, p.adjust.method = "BH") |> dplyr::ungroup()
+
+cat("\nKruskal-Wallis:\n");       print(as.data.frame(omnibus), digits = 3)
+cat("\nEffect size (eta2 H):\n"); print(as.data.frame(effsize), digits = 3)
+cat("\nDunn post-hoc, BH adjusted:\n")
+print(as.data.frame(posthoc), digits = 3)
+
+write.csv(posthoc, paste0(OUT, "_posthoc.csv"), row.names = FALSE)
+
+
+## ---------------------------------------------------------------------------
+##  5. Annotation layers
+## ---------------------------------------------------------------------------
+
+## Only comparisons that survive BH adjustment get a bracket. Each gene's
+## brackets are stacked upward so they do not overlap.
+brackets <- posthoc |>
+  dplyr::filter(p.adj < 0.05) |>
+  dplyr::mutate(
+    x     = as.numeric(factor(group1, grp)),
+    xend  = as.numeric(factor(group2, grp)),
+    label = ifelse(p.adj < 0.001, "q < 0.001", sprintf("q = %.3f", p.adj))
+  ) |>
+  dplyr::group_by(gene) |>
+  dplyr::mutate(y = 3.4 + 0.85 * (dplyr::row_number() - 1)) |>
+  dplyr::ungroup()
+
+omni_lab <- omnibus |>
+  dplyr::left_join(dplyr::select(effsize, gene, effsize), by = "gene") |>
+  dplyr::mutate(label = sprintf(
+    "Kruskal-Wallis H(%d) = %.2f, p = %s\neta squared = %.3f",
+    df, statistic,
+    ifelse(p < 0.001, "< 0.001", sprintf("%.3f", p)), effsize))
+
+n_lab <- dplyr::count(dat, gene, group) |>
+  dplyr::mutate(label = paste0("n = ", n))
+
+## Axis labels carry the linear fold change beside the log2 value, so the
+## reader does not have to convert in their head.
+fc_lab <- function(x) {
+  sprintf("%d  (%s)", x,
+          ifelse(x >= 0, paste0(2^x, "x"), paste0("1/", 2^(-x), "x")))
+}
+
+
+## ---------------------------------------------------------------------------
+##  6. The figure
+## ---------------------------------------------------------------------------
+
+p <- ggplot(dat, aes(x = group, y = log2FC)) +
+
+  ## no-change reference line
+  geom_hline(yintercept = 0, linetype = "22", colour = "grey55",
+             linewidth = 0.35) +
+
+  ## distribution shape
+  geom_violin(aes(fill = group), colour = NA, alpha = 0.20,
+              width = 0.9, trim = TRUE) +
+
+  ## median and interquartile range; outliers are hidden because every point
+  ## is drawn anyway by the layer below
+  geom_boxplot(aes(colour = group), fill = NA, width = 0.30,
+               outlier.shape = NA, linewidth = 0.5) +
+
+  ## one dot per participant, spread sideways so none is hidden
+  geom_quasirandom(aes(colour = group), width = 0.16, size = 1.1,
+                   shape = 16, alpha = 0.85) +
+
+  ## significance brackets and their labels
+  geom_segment(data = brackets,
+               aes(x = x, xend = xend, y = y, yend = y),
+               inherit.aes = FALSE, linewidth = 0.35, colour = "grey25") +
+  geom_text(data = brackets,
+            aes(x = (x + xend) / 2, y = y + 0.18, label = label),
+            inherit.aes = FALSE, size = 2.5, colour = "grey20", family = FONT) +
+
+  ## group sizes and the omnibus test result
+  geom_text(data = n_lab, aes(x = group, y = -6.5, label = label),
+            inherit.aes = FALSE, size = 2.3, colour = "grey35", family = FONT) +
+  geom_text(data = omni_lab, aes(x = 0.55, y = 7.1, label = label),
+            inherit.aes = FALSE, hjust = 0, vjust = 1, size = 2.4,
+            colour = "grey25", lineheight = 1.1, family = FONT) +
+
+  facet_wrap(~ gene, nrow = 1) +
+  scale_fill_manual(values = pal, guide = "none") +
+  scale_colour_manual(values = pal, guide = "none") +
+  scale_y_continuous(breaks = seq(-6, 6, 2), labels = fc_lab) +
+  coord_cartesian(ylim = c(-6.9, 7.2), clip = "off") +
+  labs(x = NULL, y = "log2 fold change vs healthy controls") +
+
+  theme_classic(base_size = BASE, base_family = FONT) +
+  theme(
+    strip.background = element_blank(),
+    strip.text       = element_text(face = "bold", size = 9.5),
+    axis.text.x      = element_text(face = "bold", size = 9),
+    panel.spacing.x  = unit(14, "pt"),
+    plot.margin      = margin(6, 6, 4, 6)
+  )
+
+## Draw into the RStudio Plots pane. Wrapped because a headless R session
+## (Rscript, or a server without a font-aware device) cannot always render a
+## named font family, and that should not stop the files below being written.
+if (interactive()) {
+  tryCatch(print(p), error = function(e)
+    message("Could not draw to the Plots pane (", conditionMessage(e),
+            "). The saved files are unaffected."))
+}
+
+
+## ---------------------------------------------------------------------------
+##  7. Save
+## ---------------------------------------------------------------------------
+##  cairo_pdf embeds fonts properly but is absent from a few R builds, so the
+##  script falls back to the standard pdf device rather than failing.
+
+pdf_device <- if (capabilities("cairo")) grDevices::cairo_pdf else grDevices::pdf
+
+if (HAVE_SVGLITE) {
+  ggsave(paste0(OUT, ".svg"), p, width = W, height = H,
+         device = svglite::svglite, fix_text_size = FALSE, bg = "white")
+}
+ggsave(paste0(OUT, ".pdf"),  p, width = W, height = H, device = pdf_device)
+tiff_ok <- tryCatch({
+  ggsave(paste0(OUT, ".tiff"), p, width = W, height = H, dpi = 600,
+         compression = "lzw", type = if (capabilities("cairo")) "cairo" else NULL)
+  TRUE
+}, error = function(e) { message("TIFF export failed: ", conditionMessage(e)); FALSE })
+
+cat("\nSaved in ", getwd(), ":\n", sep = "")
+print(list.files(pattern = paste0("^", OUT)))
+
+sessionInfo()
