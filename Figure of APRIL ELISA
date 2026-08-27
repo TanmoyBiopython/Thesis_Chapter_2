@@ -1,0 +1,220 @@
+# =============================================================================
+# APRIL — figure only (no caption block)
+# Self-contained: data embedded, no external file needed.
+# Select all (Ctrl+A) and Run (Ctrl+Enter). The figure appears in the Plots pane.
+#
+# If the Plots pane is small the text will look cramped. Either enlarge the pane
+# or use the print_fig() helper at the bottom, which opens a correctly sized
+# device window.
+# =============================================================================
+
+## ---- packages ---------------------------------------------------------------
+pkgs <- c("ggplot2", "dplyr", "tibble", "scales")
+new  <- pkgs[!pkgs %in% rownames(installed.packages())]
+if (length(new)) install.packages(new)
+invisible(lapply(pkgs, library, character.only = TRUE))
+
+set.seed(20260825)          # fixes the jitter so the figure is reproducible
+
+MDD    <- 0.4               # kit minimum detection dose (ng/mL)
+IMPUTE <- MDD / 2           # 0.2 ng/mL
+
+## ---- data -------------------------------------------------------------------
+## april_raw is NA for a non-detect
+dat <- tribble(
+  ~group, ~april_raw,
+  # HC — 34 samples, 7 detected
+  "HC", 1.3258, "HC", 2.0320, "HC", 4.2618, "HC", 3.1647,
+  "HC", 0.8496, "HC", 0.8600, "HC", 1.6013,
+  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
+  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
+  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
+  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
+  # GBS — 27 samples, 15 detected
+  "GBS", 1.7017, "GBS", 1.5617, "GBS", 1.1925, "GBS", 2.4357, "GBS", 0.9731,
+  "GBS", 35.2239, "GBS", 1.0103, "GBS", 3.3313, "GBS", 9.0881, "GBS", 1.0954,
+  "GBS", 2.7927, "GBS", 1.3130, "GBS", 2.0206, "GBS", 1.5278, "GBS", 1.1800,
+  "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA,
+  "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA,
+  # MS — 25 samples, 11 detected
+  "MS", 2.0074, "MS", 1.3144, "MS", 1.0776, "MS", 12.7643, "MS", 2.0438,
+  "MS", 2.9823, "MS", 2.4496, "MS", 2.2256, "MS", 4.6957, "MS", 3.2666,
+  "MS", 4.8849,
+  "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA,
+  "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA,
+  # SLE — 24 samples, 14 detected
+  "SLE", 8.5600, "SLE", 1.3609, "SLE", 2.7600, "SLE", 6.6428, "SLE", 4.3000,
+  "SLE", 4.8600, "SLE", 2.0320, "SLE", 2.7547, "SLE", 3.4293, "SLE", 1.7403,
+  "SLE", 1.0100, "SLE", 3.6500, "SLE", 8.2200, "SLE", 3.1100,
+  "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA,
+  "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA
+) |>
+  mutate(
+    group    = factor(group, levels = c("HC", "GBS", "MS", "SLE")),
+    detected = !is.na(april_raw) & april_raw >= MDD,
+    april    = ifelse(detected, april_raw, IMPUTE)
+  )
+
+stopifnot(nrow(dat) == 110)
+table(dat$group, dat$detected)      # must read 27/7, 12/15, 14/11, 10/14
+
+## ---- box statistics computed on the imputed values --------------------------
+box_stats <- dat |>
+  group_by(group) |>
+  summarise(
+    n     = n(),
+    det   = sum(detected),
+    lower = quantile(april, .25),
+    mid   = median(april),
+    upper = quantile(april, .75),
+    ymax  = max(april[april <= quantile(april, .75) +
+                        1.5 * IQR(april)]),          # upper whisker, 1.5 x IQR
+    .groups = "drop"
+  ) |>
+  mutate(ymin = lower)                                # lower whisker sits at Q1
+
+x_labels <- setNames(
+  sprintf("%s\nn=%d\n%d det.", box_stats$group, box_stats$n, box_stats$det),
+  box_stats$group
+)
+
+## ---- non-detects spread evenly along the imputation line --------------------
+nd <- dat |>
+  filter(!detected) |>
+  group_by(group) |>
+  mutate(
+    xpos = as.numeric(group) +
+      seq(-0.28, 0.28, length.out = n()) + runif(n(), -0.012, 0.012),
+    ypos = IMPUTE * 10^runif(n(), -0.012, 0.012)
+  ) |>
+  ungroup()
+
+det <- dat |> filter(detected)
+
+## ---- colours ----------------------------------------------------------------
+fill_cols <- c(HC = "#c9c9c9", GBS = "#cfe0f5", MS = "#cceadb", SLE = "#fbe3b8")
+pt_cols   <- c(HC = "#8a8a8a", GBS = "#3b7dd8", MS = "#21a179", SLE = "#e8a33d")
+
+## ---- significance brackets (Dunn vs HC, BH-adjusted) ------------------------
+brk <- tibble(
+  x    = 1,
+  xend = c(2, 3, 4),
+  y    = c(60, 115, 200),                 # data-scale heights
+  lab  = c("p = 0.047", "p = 0.079", "p = 0.005"),
+  col  = c("#8b0000", "#8a8a8a", "#8b0000"),
+  face = c("bold", "plain", "bold")
+)
+tip <- 1.20                               # multiplicative drop of the bracket tips
+
+## ---- figure -----------------------------------------------------------------
+p <- ggplot() +
+  ## shaded band below the detection limit
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0.15, ymax = MDD,
+           fill = "#f0f0f0") +
+  
+  ## boxes and whiskers, drawn from pre-computed statistics
+  geom_boxplot(data = box_stats, stat = "identity", width = 0.58,
+               aes(x = group, ymin = ymin, lower = lower, middle = mid,
+                   upper = upper, ymax = ymax, fill = group),
+               colour = "#8c8c8c", linewidth = 0.4, alpha = 0.75,
+               show.legend = FALSE) +
+  ## heavy median line on top of the default thin one
+  geom_segment(data = box_stats, linewidth = 1.1, colour = "black",
+               aes(x = as.numeric(group) - 0.29, xend = as.numeric(group) + 0.29,
+                   y = mid, yend = mid)) +
+  
+  ## non-detects: open circles at MDD/2
+  geom_point(data = nd, aes(x = xpos, y = ypos, colour = group),
+             shape = 21, fill = NA, size = 2, stroke = 0.6, alpha = 0.8,
+             show.legend = FALSE) +
+  ## measured values: filled circles
+  geom_jitter(data = det, aes(x = group, y = april, colour = group),
+              width = 0.14, height = 0, size = 2.1, alpha = 0.85,
+              show.legend = FALSE) +
+  
+  ## detection-limit reference lines
+  geom_hline(yintercept = MDD, linetype = "dashed",
+             colour = "#d62728", linewidth = 0.5) +
+  geom_hline(yintercept = IMPUTE, linetype = "dotted",
+             colour = "#9a9a9a", linewidth = 0.45) +
+  
+  ## brackets: horizontal bar plus two descending tips
+  geom_segment(data = brk, aes(x = x, xend = xend, y = y, yend = y),
+               colour = brk$col, linewidth = 0.4) +
+  geom_segment(data = brk, aes(x = x, xend = x, y = y, yend = y / tip),
+               colour = brk$col, linewidth = 0.4) +
+  geom_segment(data = brk, aes(x = xend, xend = xend, y = y, yend = y / tip),
+               colour = brk$col, linewidth = 0.4) +
+  geom_text(data = brk, aes(x = (x + xend) / 2, y = y * 1.35, label = lab),
+            colour = brk$col, fontface = brk$face, size = 3.5) +
+  
+  scale_y_log10(limits = c(0.15, 300), breaks = c(1, 10, 100),
+                labels = trans_format("log10", math_format(10^.x)),
+                expand = c(0, 0)) +
+  scale_x_discrete(labels = x_labels) +
+  scale_fill_manual(values = fill_cols) +
+  scale_colour_manual(values = pt_cols) +
+  labs(x = NULL, y = "APRIL (ng/mL, log scale)",
+       title = "APRIL        Kruskal-Wallis H = 12.56, p = 0.006") +
+  theme_classic(base_size = 11) +
+  theme(
+    plot.title  = element_text(size = 12, hjust = 0.18,
+                               margin = margin(b = 18), colour = "#222222"),
+    axis.title.y = element_text(size = 11.5, colour = "#333333",
+                                margin = margin(r = 8)),
+    axis.text.x = element_text(size = 11, colour = "#333333", lineheight = 1.45,
+                               margin = margin(t = 6)),
+    axis.text.y = element_text(size = 11, colour = "#333333"),
+    axis.line   = element_line(colour = "#444444", linewidth = 0.45),
+    axis.ticks  = element_line(colour = "#444444"),
+    plot.margin = margin(14, 20, 8, 12)
+  )
+
+## ---- legend, drawn as a separate strip below the panel ----------------------
+leg <- ggplot() +
+  annotate("point", x = 0.06, y = 2, size = 2.1, colour = "#666666") +
+  annotate("text", x = 0.10, y = 2, hjust = 0, size = 3.5, colour = "#333333",
+           label = "Measured value (above MDD)") +
+  annotate("point", x = 0.06, y = 1, size = 2, shape = 21,
+           colour = "#666666", fill = NA, stroke = 0.6) +
+  annotate("text", x = 0.10, y = 1, hjust = 0, size = 3.5, colour = "#333333",
+           label = "Non-detect, imputed at MDD/2") +
+  annotate("segment", x = 0.02, xend = 0.09, y = 0, yend = 0,
+           linetype = "dashed", colour = "#d62728") +
+  annotate("text", x = 0.10, y = 0, hjust = 0, size = 3.5, colour = "#333333",
+           label = "Kit minimum detection dose (MDD)") +
+  annotate("segment", x = 0.55, xend = 0.62, y = 2, yend = 2,
+           linetype = "dotted", colour = "#9a9a9a") +
+  annotate("text", x = 0.63, y = 2, hjust = 0, size = 3.5, colour = "#333333",
+           label = "MDD/2 (imputation value)") +
+  annotate("segment", x = 0.55, xend = 0.62, y = 1, yend = 1,
+           linewidth = 1.1, colour = "black") +
+  annotate("text", x = 0.63, y = 1, hjust = 0, size = 3.5, colour = "#333333",
+           label = "Median") +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(-0.4, 2.4)) +
+  theme_void() +
+  theme(plot.margin = margin(4, 12, 6, 12))
+
+## ---- combine and view -------------------------------------------------------
+if (!requireNamespace("patchwork", quietly = TRUE)) install.packages("patchwork")
+library(patchwork)
+
+fig <- p / leg + plot_layout(heights = c(1, 0.14))
+
+fig        # <- appears in the RStudio Plots pane
+
+## Opens a separate window at the intended size, if the Plots pane is cramped
+print_fig <- function() {
+  if (.Platform$OS.type == "windows") windows(width = 6.4, height = 6.9)
+  else if (Sys.info()[["sysname"]] == "Darwin") quartz(width = 6.4, height = 6.9)
+  else x11(width = 6.4, height = 6.9)
+  print(fig)
+}
+# print_fig()
+
+## ---- export -----------------------------------------------------------------
+# ggsave("APRIL_figure.tiff", fig, width = 6.4, height = 6.9, dpi = 600,
+#        compression = "lzw")
+# ggsave("APRIL_figure.pdf",  fig, width = 6.4, height = 6.9)
+# ggsave("APRIL_figure.svg",  fig, width = 6.4, height = 6.9)   # needs svglite
