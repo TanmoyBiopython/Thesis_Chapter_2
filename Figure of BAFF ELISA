@@ -1,0 +1,182 @@
+# =============================================================================
+# BAFF — figure only
+# Self-contained: data embedded, no external file needed.
+# Select all (Ctrl+A) and Run (Ctrl+Enter). The figure appears in the Plots pane.
+# =============================================================================
+
+## ---- packages ---------------------------------------------------------------
+pkgs <- c("ggplot2", "dplyr", "tibble", "scales")
+new  <- pkgs[!pkgs %in% rownames(installed.packages())]
+if (length(new)) install.packages(new)
+invisible(lapply(pkgs, library, character.only = TRUE))
+
+set.seed(20260825)          # fixes the jitter so the figure is reproducible
+
+## SET THIS to the minimum detection dose printed in your BAFF kit insert.
+## Every BAFF sample in the dataset is above it, so it affects only the
+## position of the red reference line and the shaded band.
+MDD    <- 2.8               # pg/mL
+IMPUTE <- MDD / 2
+
+## ---- data (BAFF, pg/mL; all 110 samples detected) ---------------------------
+dat <- tribble(
+  ~group, ~baff,
+  # HC — 34
+  "HC",  731.4077, "HC",  831.4826, "HC",  829.8358, "HC",  817.2858,
+  "HC",  485.5090, "HC",  438.6106, "HC",  676.2850, "HC",  463.6243,
+  "HC",  485.5090, "HC", 1128.5830, "HC",  767.8510, "HC",  793.6230,
+  "HC",  666.3690, "HC",  751.2430, "HC",  746.0350, "HC",  669.4030,
+  "HC",  544.9094, "HC", 1125.7728, "HC",  936.6405, "HC", 1084.7167,
+  "HC",  998.6986, "HC",  892.6327, "HC",  663.7658, "HC",  811.0119,
+  "HC",  701.3296, "HC",  591.8130, "HC",  607.4508, "HC",  908.3449,
+  "HC",  852.0970, "HC",  621.7870, "HC", 1094.2647, "HC", 1395.3018,
+  "HC", 1139.4383, "HC",  767.4759,
+  # GBS — 27
+  "GBS",  884.9212, "GBS",  785.4461, "GBS",  887.4596, "GBS", 1237.2259,
+  "GBS", 2826.4700, "GBS",  777.2240, "GBS", 1675.7465, "GBS",  138.3280,
+  "GBS", 1433.0165, "GBS",  813.6074, "GBS", 1480.8543, "GBS",  789.0592,
+  "GBS",  775.1824, "GBS", 1064.1209, "GBS", 1086.7312, "GBS",  532.4036,
+  "GBS",  447.9911, "GBS",  325.9601, "GBS",  435.4836, "GBS",  488.6353,
+  "GBS",  811.0510, "GBS", 1199.6218, "GBS",  981.0520, "GBS",  998.6986,
+  "GBS",  996.1786, "GBS", 1440.5646, "GBS", 1903.8474,
+  # MS — 25
+  "MS",  360.5630, "MS",  308.2810, "MS",  391.8300, "MS",  404.8070,
+  "MS",  886.2080, "MS",  304.3330, "MS", 1210.8290, "MS",  616.5790,
+  "MS",  579.9540, "MS",  212.5670, "MS",  791.5300, "MS",  522.8210,
+  "MS",  245.0740, "MS",  770.0456, "MS",  250.7390, "MS",  554.4230,
+  "MS",  709.0880, "MS",  425.1520, "MS",  278.9382, "MS",  137.1578,
+  "MS",  658.6733, "MS", 2547.4030, "MS",  821.2723, "MS",  637.7208,
+  "MS",  424.7901,
+  # SLE — 24
+  "SLE", 1770.1465, "SLE", 1086.7312, "SLE",  539.7190, "SLE", 1420.4402,
+  "SLE", 1038.9787, "SLE", 2413.7564, "SLE", 1593.4996, "SLE", 1246.0504,
+  "SLE", 2114.2542, "SLE", 2291.1364, "SLE",  401.0811, "SLE", 9213.9600,
+  "SLE",  939.7856, "SLE", 1147.8988, "SLE",  999.5859, "SLE",  610.5786,
+  "SLE", 1065.7827, "SLE", 2960.8391, "SLE", 2477.6670, "SLE", 1214.3586,
+  "SLE",  968.1015, "SLE",  673.1551, "SLE", 2500.8181, "SLE", 8337.6040
+) |>
+  mutate(group    = factor(group, levels = c("HC", "GBS", "MS", "SLE")),
+         detected = baff >= MDD)
+
+stopifnot(nrow(dat) == 110)
+table(dat$group, dat$detected)      # 34/27/25/24, all TRUE
+
+## ---- omnibus test, printed into the title -----------------------------------
+kw    <- kruskal.test(baff ~ group, data = dat)
+kw_lab <- sprintf("BAFF        Kruskal-Wallis H = %.2f, %s",
+                  kw$statistic,
+                  ifelse(kw$p.value < 0.001, "p < 0.001",
+                         sprintf("p = %.3f", kw$p.value)))
+kw_lab
+
+## ---- box statistics ---------------------------------------------------------
+box_stats <- dat |>
+  group_by(group) |>
+  summarise(
+    n     = n(),
+    det   = sum(detected),
+    lower = quantile(baff, .25),
+    mid   = median(baff),
+    upper = quantile(baff, .75),
+    ymin  = min(baff[baff >= quantile(baff, .25) - 1.5 * IQR(baff)]),
+    ymax  = max(baff[baff <= quantile(baff, .75) + 1.5 * IQR(baff)]),
+    .groups = "drop"
+  )
+box_stats
+
+x_labels <- setNames(
+  sprintf("%s\nn=%d\n%d det.", box_stats$group, box_stats$n, box_stats$det),
+  box_stats$group
+)
+
+## ---- colours ----------------------------------------------------------------
+fill_cols <- c(HC = "#c9c9c9", GBS = "#cfe0f5", MS = "#cceadb", SLE = "#fbe3b8")
+pt_cols   <- c(HC = "#8a8a8a", GBS = "#3b7dd8", MS = "#21a179", SLE = "#e8a33d")
+
+## ---- significance brackets (Dunn vs HC, BH-adjusted) ------------------------
+## Edit lab/col/face here if your Dunn output differs.
+brk <- tibble(
+  x    = 1,
+  xend = c(2, 3, 4),
+  y    = c(9.0e3, 2.2e4, 5.0e4),          # data-scale heights
+  lab  = c("p = 0.188", "p = 0.014", "p < 0.001"),
+  col  = c("#8a8a8a", "#8b0000", "#8b0000"),
+  face = c("plain", "bold", "bold")
+)
+tip <- 1.35                               # multiplicative drop of the bracket tips
+
+## ---- figure -----------------------------------------------------------------
+p <- ggplot() +
+  ## shaded band below the detection limit
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0.85, ymax = MDD,
+           fill = "#f0f0f0") +
+
+  ## boxes and whiskers from pre-computed statistics
+  geom_boxplot(data = box_stats, stat = "identity", width = 0.55,
+               aes(x = group, ymin = ymin, lower = lower, middle = mid,
+                   upper = upper, ymax = ymax, fill = group),
+               colour = "#8c8c8c", linewidth = 0.4, alpha = 0.75,
+               show.legend = FALSE) +
+  ## heavy median line
+  geom_segment(data = box_stats, linewidth = 1.1, colour = "black",
+               aes(x = as.numeric(group) - 0.275,
+                   xend = as.numeric(group) + 0.275, y = mid, yend = mid)) +
+
+  ## individual measurements
+  geom_jitter(data = dat, aes(x = group, y = baff, colour = group),
+              width = 0.15, height = 0, size = 1.9, alpha = 0.85,
+              show.legend = FALSE) +
+
+  ## detection-limit reference lines
+  geom_hline(yintercept = MDD, linetype = "dashed",
+             colour = "#d62728", linewidth = 0.5) +
+  geom_hline(yintercept = IMPUTE, linetype = "dotted",
+             colour = "#9a9a9a", linewidth = 0.45) +
+
+  ## brackets: horizontal bar plus two descending tips
+  geom_segment(data = brk, aes(x = x, xend = xend, y = y, yend = y),
+               colour = brk$col, linewidth = 0.4) +
+  geom_segment(data = brk, aes(x = x, xend = x, y = y, yend = y / tip),
+               colour = brk$col, linewidth = 0.4) +
+  geom_segment(data = brk, aes(x = xend, xend = xend, y = y, yend = y / tip),
+               colour = brk$col, linewidth = 0.4) +
+  geom_text(data = brk, aes(x = (x + xend) / 2, y = y * 1.55, label = lab),
+            colour = brk$col, fontface = brk$face, size = 3.3) +
+
+  scale_y_log10(limits = c(0.85, 1.3e5),
+                breaks = c(1, 10, 100, 1000, 10000),
+                labels = trans_format("log10", math_format(10^.x)),
+                expand = c(0, 0)) +
+  scale_x_discrete(labels = x_labels) +
+  scale_fill_manual(values = fill_cols) +
+  scale_colour_manual(values = pt_cols) +
+  labs(x = NULL, y = "BAFF (pg/mL, log scale)", title = kw_lab) +
+  theme_classic(base_size = 11) +
+  theme(
+    plot.title   = element_text(size = 11, hjust = 0.12,
+                                margin = margin(b = 14), colour = "#222222"),
+    axis.title.y = element_text(size = 10.5, colour = "#333333",
+                                margin = margin(r = 6)),
+    axis.text.x  = element_text(size = 9.5, colour = "#333333",
+                                lineheight = 1.4, margin = margin(t = 5)),
+    axis.text.y  = element_text(size = 10, colour = "#333333"),
+    axis.line    = element_line(colour = "#444444", linewidth = 0.45),
+    axis.ticks   = element_line(colour = "#444444"),
+    plot.margin  = margin(12, 16, 8, 10)
+  )
+
+p        # <- appears in the RStudio Plots pane
+
+## Opens a separate window at the intended size, if the Plots pane is cramped
+print_fig <- function() {
+  if (.Platform$OS.type == "windows") windows(width = 4.7, height = 5.0)
+  else if (Sys.info()[["sysname"]] == "Darwin") quartz(width = 4.7, height = 5.0)
+  else x11(width = 4.7, height = 5.0)
+  print(p)
+}
+# print_fig()
+
+## ---- export -----------------------------------------------------------------
+# ggsave("BAFF_figure.tiff", p, width = 4.7, height = 5.0, dpi = 600,
+#        compression = "lzw")
+# ggsave("BAFF_figure.pdf",  p, width = 4.7, height = 5.0)
