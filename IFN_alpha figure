@@ -1,0 +1,203 @@
+# =============================================================================
+# IFN-alpha — figure only
+# Self-contained: data embedded, no external file needed.
+# Select all (Ctrl+A) and Run (Ctrl+Enter). The figure appears in the Plots pane.
+# =============================================================================
+
+## ---- packages ---------------------------------------------------------------
+pkgs <- c("ggplot2", "dplyr", "tibble", "scales")
+new  <- pkgs[!pkgs %in% rownames(installed.packages())]
+if (length(new)) install.packages(new)
+invisible(lapply(pkgs, library, character.only = TRUE))
+
+set.seed(20260825)          # fixes the jitter so the figure is reproducible
+
+MDD    <- 1.0               # kit minimum detection dose (pg/mL) — set to yours
+IMPUTE <- MDD / 2           # 0.5 pg/mL
+
+## ---- data -------------------------------------------------------------------
+## ifn_raw is NA where the well read as a non-detect.
+## Four wells returned a value that sits BELOW the kit MDD (flagged in the
+## sheet); they are kept at their measured value, not imputed. See note below.
+dat <- tribble(
+  ~sample_id, ~group, ~ifn_raw,
+  # HC — 34 assayed, 4 with a returned value
+  "HC-10", "HC", 2.26,  "HC-3",  "HC", 0.48,  "HC-33", "HC", 1.37,
+  "HC-4",  "HC", 0.82,
+  "HC-11", "HC", NA, "HC-12", "HC", NA, "HC-13", "HC", NA, "HC-14", "HC", NA,
+  "HC-15", "HC", NA, "HC-16", "HC", NA, "HC-17", "HC", NA, "HC-18", "HC", NA,
+  "HC-19", "HC", NA, "HC-20", "HC", NA, "HC-21", "HC", NA, "HC-22", "HC", NA,
+  "HC-23", "HC", NA, "HC-24", "HC", NA, "HC-25", "HC", NA, "HC-26", "HC", NA,
+  "HC-27", "HC", NA, "HC-28", "HC", NA, "HC-29", "HC", NA, "HC-30", "HC", NA,
+  "HC-31", "HC", NA, "HC-32", "HC", NA, "HC-34", "HC", NA, "HC-35", "HC", NA,
+  "HC-36", "HC", NA, "HC-5",  "HC", NA, "HC-6A", "HC", NA, "HC-7",  "HC", NA,
+  "HC-8",  "HC", NA, "HC-9",  "HC", NA,
+  # GBS — 27 assayed, 1 with a returned value
+  "GBS-22", "GBS", 0.82,
+  "GBS-2",  "GBS", NA, "GBS-3",  "GBS", NA, "GBS-4",  "GBS", NA,
+  "GBS-5",  "GBS", NA, "GBS-6",  "GBS", NA, "GBS-7",  "GBS", NA,
+  "GBS-8",  "GBS", NA, "GBS-9",  "GBS", NA, "GBS-10", "GBS", NA,
+  "GBS-11", "GBS", NA, "GBS-12", "GBS", NA, "GBS-13", "GBS", NA,
+  "GBS-14", "GBS", NA, "GBS-15", "GBS", NA, "GBS-16", "GBS", NA,
+  "GBS-17", "GBS", NA, "GBS-18", "GBS", NA, "GBS-19", "GBS", NA,
+  "GBS-20", "GBS", NA, "GBS-21", "GBS", NA, "GBS-23", "GBS", NA,
+  "GBS-24", "GBS", NA, "GBS-25", "GBS", NA, "GBS-26", "GBS", NA,
+  "GBS-27", "GBS", NA, "GBS-28", "GBS", NA,
+  # MS — 25 assayed, 9 detected
+  "MS-1",  "MS", 2.26, "MS-13", "MS", 3.11, "MS-22", "MS", 2.08,
+  "MS-23", "MS", 3.28, "MS-24", "MS", 3.78, "MS-25", "MS", 3.11,
+  "MS-5",  "MS", 6.38, "MS-6",  "MS", 1.73, "MS-7",  "MS", 2.08,
+  "MS-2",  "MS", NA, "MS-3",  "MS", NA, "MS-4",  "MS", NA,
+  "MS-08", "MS", NA, "MS-09", "MS", NA, "MS-10", "MS", NA,
+  "MS-11", "MS", NA, "MS-12", "MS", NA, "MS-14", "MS", NA,
+  "MS-15", "MS", NA, "MS-16", "MS", NA, "MS-17", "MS", NA,
+  "MS-18", "MS", NA, "MS-19", "MS", NA, "MS-20", "MS", NA,
+  "MS-21", "MS", NA,
+  # SLE — 24 assayed, 2 detected
+  "SLE-16", "SLE", 10.76, "SLE-19", "SLE", 2.62,
+  "SLE-2",  "SLE", NA, "SLE-3",  "SLE", NA, "SLE-4",  "SLE", NA,
+  "SLE-5",  "SLE", NA, "SLE-6",  "SLE", NA, "SLE-7",  "SLE", NA,
+  "SLE-8",  "SLE", NA, "SLE-9",  "SLE", NA, "SLE-10", "SLE", NA,
+  "SLE-11", "SLE", NA, "SLE-12", "SLE", NA, "SLE-13", "SLE", NA,
+  "SLE-14", "SLE", NA, "SLE-15", "SLE", NA, "SLE-17", "SLE", NA,
+  "SLE-21", "SLE", NA, "SLE-22", "SLE", NA, "SLE-23", "SLE", NA,
+  "SLE-24", "SLE", NA, "SLE-25", "SLE", NA, "SLE-26", "SLE", NA,
+  "SLE-27", "SLE", NA
+) |>
+  mutate(
+    group    = factor(group, levels = c("HC", "GBS", "MS", "SLE")),
+    detected = !is.na(ifn_raw),                       # a value was returned
+    below    = detected & ifn_raw < MDD,              # returned but under MDD
+    ifn      = ifelse(detected, ifn_raw, IMPUTE)
+  )
+
+stopifnot(nrow(dat) == 110, !any(duplicated(dat$sample_id)))
+table(dat$group, dat$detected)     # 4, 1, 9, 2 detected
+subset(dat, below)                 # the four sub-MDD wells
+
+## ---- omnibus test, printed into the title -----------------------------------
+kw <- kruskal.test(ifn ~ group, data = dat)
+kw_lab <- sprintf("IFN-alpha        Kruskal-Wallis H = %.2f, %s",
+                  kw$statistic,
+                  ifelse(kw$p.value < 0.001, "p < 0.001",
+                         sprintf("p = %.3f", kw$p.value)))
+kw_lab
+
+## ---- box statistics on the imputed values -----------------------------------
+box_stats <- dat |>
+  group_by(group) |>
+  summarise(
+    n     = n(),
+    det   = sum(detected),
+    lower = quantile(ifn, .25),
+    mid   = median(ifn),
+    upper = quantile(ifn, .75),
+    ymin  = lower,
+    ymax  = max(ifn[ifn <= quantile(ifn, .75) + 1.5 * IQR(ifn)]),
+    .groups = "drop"
+  )
+box_stats        # HC, GBS and SLE collapse onto 0.5 — that is the data, not a bug
+
+x_labels <- setNames(
+  sprintf("%s\nn=%d\n%d det.", box_stats$group, box_stats$n, box_stats$det),
+  box_stats$group
+)
+
+## ---- non-detects spread evenly along the imputation line --------------------
+nd <- dat |>
+  filter(!detected) |>
+  group_by(group) |>
+  mutate(xpos = as.numeric(group) + seq(-0.26, 0.26, length.out = n()) +
+           runif(n(), -0.01, 0.01),
+         ypos = IMPUTE * 10^runif(n(), -0.008, 0.008)) |>
+  ungroup()
+
+det <- dat |> filter(detected)
+
+## ---- colours ----------------------------------------------------------------
+fill_cols <- c(HC = "#c9c9c9", GBS = "#cfe0f5", MS = "#cceadb", SLE = "#fbe3b8")
+pt_cols   <- c(HC = "#8a8a8a", GBS = "#3b7dd8", MS = "#21a179", SLE = "#e8a33d")
+
+## ---- significance brackets (Dunn vs HC, BH-adjusted) ------------------------
+brk <- tibble(
+  x    = 1,
+  xend = c(2, 3, 4),
+  y    = c(7.0, 14.0, 27.0),               # data-scale heights
+  lab  = c("p = 0.799", "p = 0.003", "p = 0.799"),
+  col  = c("#8a8a8a", "#8b0000", "#8a8a8a"),
+  face = c("plain", "bold", "plain")
+)
+tip <- 1.32                                # multiplicative drop of bracket tips
+
+## ---- figure -----------------------------------------------------------------
+p <- ggplot() +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0.42, ymax = MDD,
+           fill = "#f0f0f0") +
+  
+  geom_boxplot(data = box_stats, stat = "identity", width = 0.55,
+               aes(x = group, ymin = ymin, lower = lower, middle = mid,
+                   upper = upper, ymax = ymax, fill = group),
+               colour = "#8c8c8c", linewidth = 0.4, alpha = 0.75,
+               show.legend = FALSE) +
+  geom_segment(data = box_stats, linewidth = 1.1, colour = "black",
+               aes(x = as.numeric(group) - 0.275,
+                   xend = as.numeric(group) + 0.275, y = mid, yend = mid)) +
+  
+  ## non-detects: open circles at MDD/2
+  geom_point(data = nd, aes(x = xpos, y = ypos, colour = group),
+             shape = 21, fill = NA, size = 1.8, stroke = 0.55, alpha = 0.8,
+             show.legend = FALSE) +
+  ## returned values (filled), including the four that sit below the MDD
+  geom_jitter(data = det, aes(x = group, y = ifn, colour = group),
+              width = 0.13, height = 0, size = 2.1, alpha = 0.9,
+              show.legend = FALSE) +
+  
+  geom_hline(yintercept = MDD, linetype = "dashed",
+             colour = "#d62728", linewidth = 0.5) +
+  geom_hline(yintercept = IMPUTE, linetype = "dotted",
+             colour = "#9a9a9a", linewidth = 0.45) +
+  
+  geom_segment(data = brk, aes(x = x, xend = xend, y = y, yend = y),
+               colour = brk$col, linewidth = 0.4) +
+  geom_segment(data = brk, aes(x = x, xend = x, y = y, yend = y / tip),
+               colour = brk$col, linewidth = 0.4) +
+  geom_segment(data = brk, aes(x = xend, xend = xend, y = y, yend = y / tip),
+               colour = brk$col, linewidth = 0.4) +
+  geom_text(data = brk, aes(x = (x + xend) / 2, y = y * 1.42, label = lab),
+            colour = brk$col, fontface = brk$face, size = 3.2) +
+  
+  scale_y_log10(limits = c(0.42, 45), breaks = c(1, 10),
+                labels = trans_format("log10", math_format(10^.x)),
+                expand = c(0, 0)) +
+  scale_x_discrete(labels = x_labels) +
+  scale_fill_manual(values = fill_cols) +
+  scale_colour_manual(values = pt_cols) +
+  labs(x = NULL, y = "IFN-alpha (pg/mL, log scale)", title = kw_lab) +
+  theme_classic(base_size = 11) +
+  theme(
+    plot.title   = element_text(size = 10.5, hjust = 0.12,
+                                margin = margin(b = 14), colour = "#222222"),
+    axis.title.y = element_text(size = 10, colour = "#333333",
+                                margin = margin(r = 6)),
+    axis.text.x  = element_text(size = 9, colour = "#333333",
+                                lineheight = 1.4, margin = margin(t = 5)),
+    axis.text.y  = element_text(size = 10, colour = "#333333"),
+    axis.line    = element_line(colour = "#444444", linewidth = 0.45),
+    axis.ticks   = element_line(colour = "#444444"),
+    plot.margin  = margin(12, 16, 8, 10)
+  )
+
+p        # <- appears in the RStudio Plots pane
+
+print_fig <- function() {
+  if (.Platform$OS.type == "windows") windows(width = 4.5, height = 4.9)
+  else if (Sys.info()[["sysname"]] == "Darwin") quartz(width = 4.5, height = 4.9)
+  else x11(width = 4.5, height = 4.9)
+  print(p)
+}
+# print_fig()
+
+## ---- export -----------------------------------------------------------------
+# ggsave("IFNalpha_figure.tiff", p, width = 4.5, height = 4.9, dpi = 600,
+#        compression = "lzw")
+# ggsave("IFNalpha_figure.pdf",  p, width = 4.5, height = 4.9)
