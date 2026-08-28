@@ -1,220 +1,198 @@
-# =============================================================================
-# APRIL — figure only (no caption block)
-# Self-contained: data embedded, no external file needed.
-# Select all (Ctrl+A) and Run (Ctrl+Enter). The figure appears in the Plots pane.
+###############################################################################
+#  Figure 7B — Serum APRIL by group, non-detects substituted at 0
 #
-# If the Plots pane is small the text will look cramped. Either enlarge the pane
-# or use the print_fig() helper at the bottom, which opens a correctly sized
-# device window.
-# =============================================================================
+#  Reproduces the panel from "Cytokine_Profile Ver3 (non-detects = 0).xlsx".
+#  Base R graphics only: no packages to install, runs as-is in RStudio.
+#
+#  The y-axis is a symmetric-log ("symlog") scale — logarithmic above the kit
+#  minimum detection dose, linear below it — because a value of 0 has no
+#  position on an ordinary log axis. The transform below is the same one
+#  matplotlib's set_yscale("symlog") uses, so the panel is identical.
+#
+#  Run: source this file (Ctrl+Shift+S / Cmd+Shift+S). The panel is drawn into
+#  the RStudio Plots pane; export it yourself with
+#      Plots -> Export -> Save as PDF...
+#  and set Width 5.6 in, Height 7 in in that dialog so the proportions match
+#  what you see here. "Cairo PDF" gives the cleanest text; either works.
+#
+#  If you get "Error in plot.new(): figure margins too large", the Plots pane is
+#  simply too small for the margins - drag it larger, or click Zoom, and re-run.
+###############################################################################
 
-## ---- packages ---------------------------------------------------------------
-pkgs <- c("ggplot2", "dplyr", "tibble", "scales")
-new  <- pkgs[!pkgs %in% rownames(installed.packages())]
-if (length(new)) install.packages(new)
-invisible(lapply(pkgs, library, character.only = TRUE))
+## ---------------------------------------------------------------- 1. DATA ---
+## Zero-substituted APRIL concentrations (ng/mL). 0 = below the limit of
+## detection (this includes any value reported below the kit MDD).
+## To use your own file instead, see the readxl block at the foot of this script.
 
-set.seed(20260825)          # fixes the jitter so the figure is reproducible
-
-MDD    <- 0.4               # kit minimum detection dose (ng/mL)
-IMPUTE <- MDD / 2           # 0.2 ng/mL
-
-## ---- data -------------------------------------------------------------------
-## april_raw is NA for a non-detect
-dat <- tribble(
-  ~group, ~april_raw,
-  # HC — 34 samples, 7 detected
-  "HC", 1.3258, "HC", 2.0320, "HC", 4.2618, "HC", 3.1647,
-  "HC", 0.8496, "HC", 0.8600, "HC", 1.6013,
-  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
-  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
-  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
-  "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA, "HC", NA,
-  # GBS — 27 samples, 15 detected
-  "GBS", 1.7017, "GBS", 1.5617, "GBS", 1.1925, "GBS", 2.4357, "GBS", 0.9731,
-  "GBS", 35.2239, "GBS", 1.0103, "GBS", 3.3313, "GBS", 9.0881, "GBS", 1.0954,
-  "GBS", 2.7927, "GBS", 1.3130, "GBS", 2.0206, "GBS", 1.5278, "GBS", 1.1800,
-  "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA,
-  "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA, "GBS", NA,
-  # MS — 25 samples, 11 detected
-  "MS", 2.0074, "MS", 1.3144, "MS", 1.0776, "MS", 12.7643, "MS", 2.0438,
-  "MS", 2.9823, "MS", 2.4496, "MS", 2.2256, "MS", 4.6957, "MS", 3.2666,
-  "MS", 4.8849,
-  "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA,
-  "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA, "MS", NA,
-  # SLE — 24 samples, 14 detected
-  "SLE", 8.5600, "SLE", 1.3609, "SLE", 2.7600, "SLE", 6.6428, "SLE", 4.3000,
-  "SLE", 4.8600, "SLE", 2.0320, "SLE", 2.7547, "SLE", 3.4293, "SLE", 1.7403,
-  "SLE", 1.0100, "SLE", 3.6500, "SLE", 8.2200, "SLE", 3.1100,
-  "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA,
-  "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA, "SLE", NA
-) |>
-  mutate(
-    group    = factor(group, levels = c("HC", "GBS", "MS", "SLE")),
-    detected = !is.na(april_raw) & april_raw >= MDD,
-    april    = ifelse(detected, april_raw, IMPUTE)
-  )
-
-stopifnot(nrow(dat) == 110)
-table(dat$group, dat$detected)      # must read 27/7, 12/15, 14/11, 10/14
-
-## ---- box statistics computed on the imputed values --------------------------
-box_stats <- dat |>
-  group_by(group) |>
-  summarise(
-    n     = n(),
-    det   = sum(detected),
-    lower = quantile(april, .25),
-    mid   = median(april),
-    upper = quantile(april, .75),
-    ymax  = max(april[april <= quantile(april, .75) +
-                        1.5 * IQR(april)]),          # upper whisker, 1.5 x IQR
-    .groups = "drop"
-  ) |>
-  mutate(ymin = lower)                                # lower whisker sits at Q1
-
-x_labels <- setNames(
-  sprintf("%s\nn=%d\n%d det.", box_stats$group, box_stats$n, box_stats$det),
-  box_stats$group
+april <- list(
+  HC  = c(0, 0.8496, 0, 0, 0, 0, 0, 0, 0.86, 0, 0, 1.6013, 0, 0, 0, 0, 0,
+          0, 0, 0, 1.3258, 0, 0, 0, 0, 0, 0, 0, 2.032, 4.2618, 0, 0, 3.1647, 0),
+  GBS = c(2.4357, 0.9731, 0, 35.2239, 1.0103, 3.3313, 9.0881, 0, 1.0954, 0,
+          1.7017, 2.7927, 1.313, 2.0206, 1.5278, 0, 1.18, 0, 0, 0, 1.5617,
+          0, 0, 0, 0, 1.1925, 0),
+  MS  = c(0, 0, 2.0074, 2.9823, 0, 2.4496, 0, 0, 0, 2.2256, 0, 4.6957, 3.2666,
+          1.3144, 4.8849, 0, 0, 0, 0, 0, 0, 1.0776, 0, 12.7643, 2.0438),
+  SLE = c(0, 4.86, 2.032, 2.7547, 3.4293, 1.7403, 0, 1.01, 0, 8.56, 3.65, 8.22,
+          0, 0, 3.11, 0, 0, 1.3609, 0, 0, 2.76, 0, 6.6428, 4.3)
 )
 
-## ---- non-detects spread evenly along the imputation line --------------------
-nd <- dat |>
-  filter(!detected) |>
-  group_by(group) |>
-  mutate(
-    xpos = as.numeric(group) +
-      seq(-0.28, 0.28, length.out = n()) + runif(n(), -0.012, 0.012),
-    ypos = IMPUTE * 10^runif(n(), -0.012, 0.012)
-  ) |>
-  ungroup()
+groups   <- c("HC", "GBS", "MS", "SLE")
+cols     <- c(HC = "#8c8c8c", GBS = "#4c8fe3", MS = "#3fc191", SLE = "#f2a93b")
+analyte  <- "APRIL"
+unit     <- "ng/mL"
+mdd      <- 0.4          # kit minimum detection dose, ng/mL
+## Swapping in another analyte's vectors and its MDD reproduces the other panels:
+## BAFF 2.68 pg/mL, IFN-alpha 1.07 pg/mL, IFN-beta 5.0 pg/mL, IFN-gamma 1.28 pg/mL.
 
-det <- dat |> filter(detected)
+## ------------------------------------------------------- 2. SYMLOG SCALE ---
+## matplotlib SymmetricalLogTransform, base 10, linthresh = mdd, linscale = 0.6
+linscale     <- 0.6
+linscale_adj <- linscale / (1 - 1 / 10)
 
-## ---- colours ----------------------------------------------------------------
-fill_cols <- c(HC = "#c9c9c9", GBS = "#cfe0f5", MS = "#cceadb", SLE = "#fbe3b8")
-pt_cols   <- c(HC = "#8a8a8a", GBS = "#3b7dd8", MS = "#21a179", SLE = "#e8a33d")
-
-## ---- significance brackets (Dunn vs HC, BH-adjusted) ------------------------
-brk <- tibble(
-  x    = 1,
-  xend = c(2, 3, 4),
-  y    = c(60, 115, 200),                 # data-scale heights
-  lab  = c("p = 0.047", "p = 0.079", "p = 0.005"),
-  col  = c("#8b0000", "#8a8a8a", "#8b0000"),
-  face = c("bold", "plain", "bold")
-)
-tip <- 1.20                               # multiplicative drop of the bracket tips
-
-## ---- figure -----------------------------------------------------------------
-p <- ggplot() +
-  ## shaded band below the detection limit
-  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0.15, ymax = MDD,
-           fill = "#f0f0f0") +
-  
-  ## boxes and whiskers, drawn from pre-computed statistics
-  geom_boxplot(data = box_stats, stat = "identity", width = 0.58,
-               aes(x = group, ymin = ymin, lower = lower, middle = mid,
-                   upper = upper, ymax = ymax, fill = group),
-               colour = "#8c8c8c", linewidth = 0.4, alpha = 0.75,
-               show.legend = FALSE) +
-  ## heavy median line on top of the default thin one
-  geom_segment(data = box_stats, linewidth = 1.1, colour = "black",
-               aes(x = as.numeric(group) - 0.29, xend = as.numeric(group) + 0.29,
-                   y = mid, yend = mid)) +
-  
-  ## non-detects: open circles at MDD/2
-  geom_point(data = nd, aes(x = xpos, y = ypos, colour = group),
-             shape = 21, fill = NA, size = 2, stroke = 0.6, alpha = 0.8,
-             show.legend = FALSE) +
-  ## measured values: filled circles
-  geom_jitter(data = det, aes(x = group, y = april, colour = group),
-              width = 0.14, height = 0, size = 2.1, alpha = 0.85,
-              show.legend = FALSE) +
-  
-  ## detection-limit reference lines
-  geom_hline(yintercept = MDD, linetype = "dashed",
-             colour = "#d62728", linewidth = 0.5) +
-  geom_hline(yintercept = IMPUTE, linetype = "dotted",
-             colour = "#9a9a9a", linewidth = 0.45) +
-  
-  ## brackets: horizontal bar plus two descending tips
-  geom_segment(data = brk, aes(x = x, xend = xend, y = y, yend = y),
-               colour = brk$col, linewidth = 0.4) +
-  geom_segment(data = brk, aes(x = x, xend = x, y = y, yend = y / tip),
-               colour = brk$col, linewidth = 0.4) +
-  geom_segment(data = brk, aes(x = xend, xend = xend, y = y, yend = y / tip),
-               colour = brk$col, linewidth = 0.4) +
-  geom_text(data = brk, aes(x = (x + xend) / 2, y = y * 1.35, label = lab),
-            colour = brk$col, fontface = brk$face, size = 3.5) +
-  
-  scale_y_log10(limits = c(0.15, 300), breaks = c(1, 10, 100),
-                labels = trans_format("log10", math_format(10^.x)),
-                expand = c(0, 0)) +
-  scale_x_discrete(labels = x_labels) +
-  scale_fill_manual(values = fill_cols) +
-  scale_colour_manual(values = pt_cols) +
-  labs(x = NULL, y = "APRIL (ng/mL, log scale)",
-       title = "APRIL        Kruskal-Wallis H = 12.56, p = 0.006") +
-  theme_classic(base_size = 11) +
-  theme(
-    plot.title  = element_text(size = 12, hjust = 0.18,
-                               margin = margin(b = 18), colour = "#222222"),
-    axis.title.y = element_text(size = 11.5, colour = "#333333",
-                                margin = margin(r = 8)),
-    axis.text.x = element_text(size = 11, colour = "#333333", lineheight = 1.45,
-                               margin = margin(t = 6)),
-    axis.text.y = element_text(size = 11, colour = "#333333"),
-    axis.line   = element_line(colour = "#444444", linewidth = 0.45),
-    axis.ticks  = element_line(colour = "#444444"),
-    plot.margin = margin(14, 20, 8, 12)
-  )
-
-## ---- legend, drawn as a separate strip below the panel ----------------------
-leg <- ggplot() +
-  annotate("point", x = 0.06, y = 2, size = 2.1, colour = "#666666") +
-  annotate("text", x = 0.10, y = 2, hjust = 0, size = 3.5, colour = "#333333",
-           label = "Measured value (above MDD)") +
-  annotate("point", x = 0.06, y = 1, size = 2, shape = 21,
-           colour = "#666666", fill = NA, stroke = 0.6) +
-  annotate("text", x = 0.10, y = 1, hjust = 0, size = 3.5, colour = "#333333",
-           label = "Non-detect, imputed at MDD/2") +
-  annotate("segment", x = 0.02, xend = 0.09, y = 0, yend = 0,
-           linetype = "dashed", colour = "#d62728") +
-  annotate("text", x = 0.10, y = 0, hjust = 0, size = 3.5, colour = "#333333",
-           label = "Kit minimum detection dose (MDD)") +
-  annotate("segment", x = 0.55, xend = 0.62, y = 2, yend = 2,
-           linetype = "dotted", colour = "#9a9a9a") +
-  annotate("text", x = 0.63, y = 2, hjust = 0, size = 3.5, colour = "#333333",
-           label = "MDD/2 (imputation value)") +
-  annotate("segment", x = 0.55, xend = 0.62, y = 1, yend = 1,
-           linewidth = 1.1, colour = "black") +
-  annotate("text", x = 0.63, y = 1, hjust = 0, size = 3.5, colour = "#333333",
-           label = "Median") +
-  scale_x_continuous(limits = c(0, 1)) +
-  scale_y_continuous(limits = c(-0.4, 2.4)) +
-  theme_void() +
-  theme(plot.margin = margin(4, 12, 6, 12))
-
-## ---- combine and view -------------------------------------------------------
-if (!requireNamespace("patchwork", quietly = TRUE)) install.packages("patchwork")
-library(patchwork)
-
-fig <- p / leg + plot_layout(heights = c(1, 0.14))
-
-fig        # <- appears in the RStudio Plots pane
-
-## Opens a separate window at the intended size, if the Plots pane is cramped
-print_fig <- function() {
-  if (.Platform$OS.type == "windows") windows(width = 6.4, height = 6.9)
-  else if (Sys.info()[["sysname"]] == "Darwin") quartz(width = 6.4, height = 6.9)
-  else x11(width = 6.4, height = 6.9)
-  print(fig)
+symlog <- function(x, linthresh = mdd) {
+  s <- sign(x); a <- abs(x)
+  ifelse(a <= linthresh,
+         x * (linscale_adj / linthresh),
+         s * (log10(a / linthresh) + linscale_adj))
 }
-# print_fig()
 
-## ---- export -----------------------------------------------------------------
-# ggsave("APRIL_figure.tiff", fig, width = 6.4, height = 6.9, dpi = 600,
-#        compression = "lzw")
-# ggsave("APRIL_figure.pdf",  fig, width = 6.4, height = 6.9)
-# ggsave("APRIL_figure.svg",  fig, width = 6.4, height = 6.9)   # needs svglite
+## ------------------------------------------------------------ 3. STATS -----
+## Kruskal-Wallis across the four groups
+kw <- kruskal.test(april)
+
+## Dunn's test, tie-corrected, Benjamini-Hochberg adjusted over all six pairs.
+dunn_test <- function(x) {
+  v  <- unlist(x, use.names = FALSE)
+  g  <- rep(names(x), lengths(x))
+  N  <- length(v)
+  r  <- rank(v)
+  mr <- tapply(r, g, mean)
+  n  <- tapply(r, g, length)
+  tie   <- table(v)
+  sigma2 <- (N * (N + 1) / 12) - sum(tie^3 - tie) / (12 * (N - 1))
+  pr <- combn(names(x), 2, simplify = FALSE)
+  z  <- sapply(pr, function(p)
+    (mr[[p[1]]] - mr[[p[2]]]) / sqrt(sigma2 * (1 / n[[p[1]]] + 1 / n[[p[2]]])))
+  p  <- 2 * pnorm(-abs(z))
+  data.frame(a = sapply(pr, `[`, 1), b = sapply(pr, `[`, 2),
+             z = z, p = p, p_adj = p.adjust(p, "BH"), row.names = NULL)
+}
+
+dn <- dunn_test(april)
+get_p <- function(g1, g2)
+  dn$p_adj[(dn$a == g1 & dn$b == g2) | (dn$a == g2 & dn$b == g1)][1]
+
+cat(sprintf("Kruskal-Wallis H = %.2f, df = %d, p = %.4f\n",
+            kw$statistic, kw$parameter, kw$p.value))
+print(dn, digits = 3)
+
+## ----------------------------------------------------------- 4. GEOMETRY ---
+top   <- max(unlist(april), na.rm = TRUE)
+ylim  <- symlog(c(-mdd * 0.35, top * 9))
+xlim  <- c(0.4, 4.6)
+ticks <- c(0, 0.1, 1, 10, 100)
+tick_labels <- expression(0, 10^-1, 10^0, 10^1, 10^2)
+
+## whiskers as matplotlib draws them: furthest point inside 1.5 x IQR
+box_stats <- function(v) {
+  q <- quantile(v, c(.25, .5, .75), type = 7, na.rm = TRUE)
+  iqr <- q[3] - q[1]
+  lo <- min(v[v >= q[1] - 1.5 * iqr]); hi <- max(v[v <= q[3] + 1.5 * iqr])
+  c(lo = lo, q1 = q[[1]], med = q[[2]], q3 = q[[3]], hi = hi)
+}
+
+## ------------------------------------------------------------- 5. PLOT -----
+## Draws on whatever device is currently open. Called at the foot of the script
+## with no device opened first, so it lands in the RStudio Plots pane.
+
+draw_panel <- function() {
+
+op <- par(mar = c(5.2, 5.2, 5.6, 1.2), mgp = c(3.4, 0.7, 0), las = 1,
+          xaxs = "i", cex.axis = 1.0)
+on.exit(par(op), add = TRUE)
+
+plot(NA, xlim = xlim, ylim = ylim, axes = FALSE, xlab = "", ylab = "")
+
+## reference lines
+abline(h = symlog(mdd), lty = 2, col = "#d62728", lwd = 1.4)
+abline(h = symlog(0),   lty = 3, col = "#555555", lwd = 1.2)
+
+set.seed(11)   # jitter only; change freely, it carries no information
+for (i in seq_along(groups)) {
+  g <- groups[i]; v <- april[[g]]; k <- cols[[g]]
+  bs <- box_stats(v)
+
+  ## box: median and interquartile range
+  rect(i - 0.275, symlog(bs[["q1"]]), i + 0.275, symlog(bs[["q3"]]),
+       col = adjustcolor(k, alpha.f = 0.20), border = "#666666")
+  segments(i - 0.275, symlog(bs[["med"]]), i + 0.275, symlog(bs[["med"]]),
+           lwd = 2.2, col = "black")
+  ## whiskers and caps
+  segments(i, symlog(bs[["q3"]]), i, symlog(bs[["hi"]]), col = "#666666")
+  segments(i, symlog(bs[["q1"]]), i, symlog(bs[["lo"]]), col = "#666666")
+  segments(i - 0.14, symlog(bs[["hi"]]), i + 0.14, symlog(bs[["hi"]]), col = "#666666")
+  segments(i - 0.14, symlog(bs[["lo"]]), i + 0.14, symlog(bs[["lo"]]), col = "#666666")
+
+  ## every participant, filled if measured and open if set to 0
+  xj  <- i + runif(length(v), -0.18, 0.18)
+  det <- v > 0
+  points(xj[det],  symlog(v[det]),  pch = 21, bg = k, col = "white", cex = 1.05)
+  points(xj[!det], symlog(v[!det]), pch = 21, bg = NA, col = "#9a9a9a",
+         cex = 1.05, lwd = 1.1)
+}
+
+## axes
+axis(2, at = symlog(ticks), labels = tick_labels, lwd = 0, lwd.ticks = 1)
+axis(1, at = seq_along(groups), labels = FALSE, lwd = 0, lwd.ticks = 1)
+mtext(sprintf("%s\n%d (%d)", groups, lengths(april),
+              sapply(april, function(v) sum(v > 0))),
+      side = 1, at = seq_along(groups), line = 1.9, cex = 1.0)
+mtext("group\nn (number of measured, non-zero values)", side = 1, line = 4.0, cex = 0.9)
+mtext(sprintf("%s (%s, symlog scale)", analyte, unit), side = 2, line = 3.4,
+      las = 0, cex = 1.05)
+box(bty = "l")
+
+## title: analyte and the omnibus test
+mtext(analyte, side = 3, line = 3.1, cex = 1.1)
+mtext(sprintf("Kruskal-Wallis H = %.2f, p = %s", kw$statistic,
+              ifelse(kw$p.value < 0.001, "< 0.001", sprintf("%.3f", kw$p.value))),
+      side = 3, line = 1.9, cex = 1.1)
+
+## post-hoc brackets against healthy controls, at 1.3x / 2.6x / 5.2x the maximum
+bracket <- function(x1, x2, y, p) {
+  yt <- symlog(y); yb <- symlog(y * 0.93)
+  lines(c(x1, x1, x2, x2), c(yb, yt, yt, yb), col = "#666666", lwd = 1.2)
+  sig <- p < 0.05
+  text(mean(c(x1, x2)), yt,
+       ifelse(p < 0.001, "p < 0.001", sprintf("p = %.3f", p)),
+       pos = 3, offset = 0.25, cex = 0.95,
+       col = if (sig) "#8b0000" else "#666666", font = if (sig) 2 else 1)
+}
+for (k in 1:3) {
+  g <- c("GBS", "MS", "SLE")[k]
+  bracket(1, which(groups == g), top * c(1.3, 2.6, 5.2)[k], get_p(g, "HC"))
+}
+
+invisible(NULL)
+}
+
+## ------------------------------------------------------------ 6. RENDER ----
+draw_panel()          # -> RStudio Plots pane; export manually from there
+
+## Optional: write the file directly instead of exporting by hand.
+## cairo_pdf("Figure_7B_APRIL.pdf", width = 5.6, height = 7); draw_panel(); dev.off()
+## png("Figure_7B_APRIL.png", width = 5.6, height = 7, units = "in", res = 300)
+##   draw_panel(); dev.off()
+
+###############################################################################
+#  Reading the data from the workbook instead of the vectors above
+#  (needs readxl; the concentration and status columns are C:V of "Clean Data",
+#  APRIL is columns G and H):
+#
+#  library(readxl)
+#  d <- read_excel("Cytokine_Profile Ver3 (non-detects = 0).xlsx",
+#                  sheet = "Clean Data", skip = 3)
+#  d <- d[d$Group %in% groups, ]
+#  april <- split(as.numeric(d$`APRIL (ng/mL)`), factor(d$Group, levels = groups))
+#  april <- lapply(april, function(v) v[!is.na(v)])   # drop never-assayed samples
+###############################################################################
