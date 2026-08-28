@@ -1,182 +1,224 @@
-# =============================================================================
-# BAFF — figure only
-# Self-contained: data embedded, no external file needed.
-# Select all (Ctrl+A) and Run (Ctrl+Enter). The figure appears in the Plots pane.
-# =============================================================================
+###############################################################################
+#  Figure 7A — Serum BAFF by group
+#
+#  Companion to APRIL_figure.R. Base R graphics only: no packages to install.
+#
+#  Run: source this file (Ctrl+Shift+S / Cmd+Shift+S). The panel is drawn into
+#  the RStudio Plots pane; export it yourself with
+#      Plots -> Export -> Save as PDF...
+#  and set Width 5.6 in, Height 7 in in that dialog so the proportions match.
+#  "Cairo PDF" gives the cleanest text; either works.
+#
+#  If you get "Error in plot.new(): figure margins too large", the Plots pane is
+#  too small for the margins - drag it larger, or click Zoom, and re-run.
+###############################################################################
 
-## ---- packages ---------------------------------------------------------------
-pkgs <- c("ggplot2", "dplyr", "tibble", "scales")
-new  <- pkgs[!pkgs %in% rownames(installed.packages())]
-if (length(new)) install.packages(new)
-invisible(lapply(pkgs, library, character.only = TRUE))
+## ---------------------------------------------------------------- 1. DATA ---
+## BAFF was quantifiable in all 110 samples: no non-detects, no sub-MDD values,
+## nothing substituted. Every number below is a measurement.
 
-set.seed(20260825)          # fixes the jitter so the figure is reproducible
-
-## SET THIS to the minimum detection dose printed in your BAFF kit insert.
-## Every BAFF sample in the dataset is above it, so it affects only the
-## position of the red reference line and the shaded band.
-MDD    <- 2.8               # pg/mL
-IMPUTE <- MDD / 2
-
-## ---- data (BAFF, pg/mL; all 110 samples detected) ---------------------------
-dat <- tribble(
-  ~group, ~baff,
-  # HC — 34
-  "HC",  731.4077, "HC",  831.4826, "HC",  829.8358, "HC",  817.2858,
-  "HC",  485.5090, "HC",  438.6106, "HC",  676.2850, "HC",  463.6243,
-  "HC",  485.5090, "HC", 1128.5830, "HC",  767.8510, "HC",  793.6230,
-  "HC",  666.3690, "HC",  751.2430, "HC",  746.0350, "HC",  669.4030,
-  "HC",  544.9094, "HC", 1125.7728, "HC",  936.6405, "HC", 1084.7167,
-  "HC",  998.6986, "HC",  892.6327, "HC",  663.7658, "HC",  811.0119,
-  "HC",  701.3296, "HC",  591.8130, "HC",  607.4508, "HC",  908.3449,
-  "HC",  852.0970, "HC",  621.7870, "HC", 1094.2647, "HC", 1395.3018,
-  "HC", 1139.4383, "HC",  767.4759,
-  # GBS — 27
-  "GBS",  884.9212, "GBS",  785.4461, "GBS",  887.4596, "GBS", 1237.2259,
-  "GBS", 2826.4700, "GBS",  777.2240, "GBS", 1675.7465, "GBS",  138.3280,
-  "GBS", 1433.0165, "GBS",  813.6074, "GBS", 1480.8543, "GBS",  789.0592,
-  "GBS",  775.1824, "GBS", 1064.1209, "GBS", 1086.7312, "GBS",  532.4036,
-  "GBS",  447.9911, "GBS",  325.9601, "GBS",  435.4836, "GBS",  488.6353,
-  "GBS",  811.0510, "GBS", 1199.6218, "GBS",  981.0520, "GBS",  998.6986,
-  "GBS",  996.1786, "GBS", 1440.5646, "GBS", 1903.8474,
-  # MS — 25
-  "MS",  360.5630, "MS",  308.2810, "MS",  391.8300, "MS",  404.8070,
-  "MS",  886.2080, "MS",  304.3330, "MS", 1210.8290, "MS",  616.5790,
-  "MS",  579.9540, "MS",  212.5670, "MS",  791.5300, "MS",  522.8210,
-  "MS",  245.0740, "MS",  770.0456, "MS",  250.7390, "MS",  554.4230,
-  "MS",  709.0880, "MS",  425.1520, "MS",  278.9382, "MS",  137.1578,
-  "MS",  658.6733, "MS", 2547.4030, "MS",  821.2723, "MS",  637.7208,
-  "MS",  424.7901,
-  # SLE — 24
-  "SLE", 1770.1465, "SLE", 1086.7312, "SLE",  539.7190, "SLE", 1420.4402,
-  "SLE", 1038.9787, "SLE", 2413.7564, "SLE", 1593.4996, "SLE", 1246.0504,
-  "SLE", 2114.2542, "SLE", 2291.1364, "SLE",  401.0811, "SLE", 9213.9600,
-  "SLE",  939.7856, "SLE", 1147.8988, "SLE",  999.5859, "SLE",  610.5786,
-  "SLE", 1065.7827, "SLE", 2960.8391, "SLE", 2477.6670, "SLE", 1214.3586,
-  "SLE",  968.1015, "SLE",  673.1551, "SLE", 2500.8181, "SLE", 8337.6040
-) |>
-  mutate(group    = factor(group, levels = c("HC", "GBS", "MS", "SLE")),
-         detected = baff >= MDD)
-
-stopifnot(nrow(dat) == 110)
-table(dat$group, dat$detected)      # 34/27/25/24, all TRUE
-
-## ---- omnibus test, printed into the title -----------------------------------
-kw    <- kruskal.test(baff ~ group, data = dat)
-kw_lab <- sprintf("BAFF        Kruskal-Wallis H = %.2f, %s",
-                  kw$statistic,
-                  ifelse(kw$p.value < 0.001, "p < 0.001",
-                         sprintf("p = %.3f", kw$p.value)))
-kw_lab
-
-## ---- box statistics ---------------------------------------------------------
-box_stats <- dat |>
-  group_by(group) |>
-  summarise(
-    n     = n(),
-    det   = sum(detected),
-    lower = quantile(baff, .25),
-    mid   = median(baff),
-    upper = quantile(baff, .75),
-    ymin  = min(baff[baff >= quantile(baff, .25) - 1.5 * IQR(baff)]),
-    ymax  = max(baff[baff <= quantile(baff, .75) + 1.5 * IQR(baff)]),
-    .groups = "drop"
-  )
-box_stats
-
-x_labels <- setNames(
-  sprintf("%s\nn=%d\n%d det.", box_stats$group, box_stats$n, box_stats$det),
-  box_stats$group
+dat <- list(
+  HC  = c(731.408, 831.483, 829.836, 817.286, 485.509, 438.611, 676.285,
+          463.624, 485.509, 1128.58, 767.851, 793.623, 666.369, 751.243,
+          746.035, 669.403, 544.909, 1125.77, 936.64, 1084.72, 998.699,
+          892.633, 663.766, 811.012, 701.33, 591.813, 607.451, 908.345,
+          852.097, 621.787, 1094.26, 1395.3, 1139.44, 767.476),
+  GBS = c(884.921, 785.446, 887.46, 1237.23, 2826.47, 777.224, 1675.75,
+          138.328, 1433.02, 813.607, 1480.85, 789.059, 775.182, 1064.12,
+          1086.73, 532.404, 447.991, 325.96, 435.484, 488.635, 811.051,
+          1199.62, 981.052, 998.699, 996.179, 1440.56, 1903.85),
+  MS  = c(360.563, 308.281, 391.83, 404.807, 886.208, 304.333, 1210.83,
+          616.579, 579.954, 212.567, 791.53, 522.821, 245.074, 770.046,
+          250.739, 554.423, 709.088, 425.152, 278.938, 137.158, 658.673,
+          2547.4, 821.272, 637.721, 424.79),
+  SLE = c(1770.15, 1086.73, 539.719, 1420.44, 1038.98, 2413.76, 1593.5,
+          1246.05, 2114.25, 2291.14, 401.081, 9213.96, 939.786, 1147.9,
+          999.586, 610.579, 1065.78, 2960.84, 2477.67, 1214.36, 968.101,
+          673.155, 2500.82, 8337.6)
 )
 
-## ---- colours ----------------------------------------------------------------
-fill_cols <- c(HC = "#c9c9c9", GBS = "#cfe0f5", MS = "#cceadb", SLE = "#fbe3b8")
-pt_cols   <- c(HC = "#8a8a8a", GBS = "#3b7dd8", MS = "#21a179", SLE = "#e8a33d")
+groups  <- c("HC", "GBS", "MS", "SLE")
+cols    <- c(HC = "#8c8c8c", GBS = "#4c8fe3", MS = "#3fc191", SLE = "#f2a93b")
+analyte <- "BAFF"
+unit    <- "pg/mL"
+mdd     <- 2.68          # kit minimum detection dose, pg/mL
+## Other panels: APRIL 0.4 ng/mL, IFN-alpha 1.07, IFN-beta 5.0, IFN-gamma 1.28 pg/mL.
 
-## ---- significance brackets (Dunn vs HC, BH-adjusted) ------------------------
-## Edit lab/col/face here if your Dunn output differs.
-brk <- tibble(
-  x    = 1,
-  xend = c(2, 3, 4),
-  y    = c(9.0e3, 2.2e4, 5.0e4),          # data-scale heights
-  lab  = c("p = 0.188", "p = 0.014", "p < 0.001"),
-  col  = c("#8a8a8a", "#8b0000", "#8b0000"),
-  face = c("plain", "bold", "bold")
-)
-tip <- 1.35                               # multiplicative drop of the bracket tips
+## TRUE  = symmetric-log axis, matching the panel in the workbook.
+## FALSE = plain log10 axis. Preferable for BAFF: the symlog scale exists only to
+##         give a value of 0 somewhere to sit, and BAFF has no zeros, so it just
+##         spends the lower half of the panel on empty space between 0 and the
+##         lowest measurement (137 pg/mL). See the note at the foot of the file.
+use_symlog <- TRUE
 
-## ---- figure -----------------------------------------------------------------
-p <- ggplot() +
-  ## shaded band below the detection limit
-  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0.85, ymax = MDD,
-           fill = "#f0f0f0") +
+## ------------------------------------------------------- 2. Y-AXIS SCALE ---
+## matplotlib SymmetricalLogTransform, base 10, linthresh = mdd, linscale = 0.6
+linscale     <- 0.6
+linscale_adj <- linscale / (1 - 1 / 10)
 
-  ## boxes and whiskers from pre-computed statistics
-  geom_boxplot(data = box_stats, stat = "identity", width = 0.55,
-               aes(x = group, ymin = ymin, lower = lower, middle = mid,
-                   upper = upper, ymax = ymax, fill = group),
-               colour = "#8c8c8c", linewidth = 0.4, alpha = 0.75,
-               show.legend = FALSE) +
-  ## heavy median line
-  geom_segment(data = box_stats, linewidth = 1.1, colour = "black",
-               aes(x = as.numeric(group) - 0.275,
-                   xend = as.numeric(group) + 0.275, y = mid, yend = mid)) +
-
-  ## individual measurements
-  geom_jitter(data = dat, aes(x = group, y = baff, colour = group),
-              width = 0.15, height = 0, size = 1.9, alpha = 0.85,
-              show.legend = FALSE) +
-
-  ## detection-limit reference lines
-  geom_hline(yintercept = MDD, linetype = "dashed",
-             colour = "#d62728", linewidth = 0.5) +
-  geom_hline(yintercept = IMPUTE, linetype = "dotted",
-             colour = "#9a9a9a", linewidth = 0.45) +
-
-  ## brackets: horizontal bar plus two descending tips
-  geom_segment(data = brk, aes(x = x, xend = xend, y = y, yend = y),
-               colour = brk$col, linewidth = 0.4) +
-  geom_segment(data = brk, aes(x = x, xend = x, y = y, yend = y / tip),
-               colour = brk$col, linewidth = 0.4) +
-  geom_segment(data = brk, aes(x = xend, xend = xend, y = y, yend = y / tip),
-               colour = brk$col, linewidth = 0.4) +
-  geom_text(data = brk, aes(x = (x + xend) / 2, y = y * 1.55, label = lab),
-            colour = brk$col, fontface = brk$face, size = 3.3) +
-
-  scale_y_log10(limits = c(0.85, 1.3e5),
-                breaks = c(1, 10, 100, 1000, 10000),
-                labels = trans_format("log10", math_format(10^.x)),
-                expand = c(0, 0)) +
-  scale_x_discrete(labels = x_labels) +
-  scale_fill_manual(values = fill_cols) +
-  scale_colour_manual(values = pt_cols) +
-  labs(x = NULL, y = "BAFF (pg/mL, log scale)", title = kw_lab) +
-  theme_classic(base_size = 11) +
-  theme(
-    plot.title   = element_text(size = 11, hjust = 0.12,
-                                margin = margin(b = 14), colour = "#222222"),
-    axis.title.y = element_text(size = 10.5, colour = "#333333",
-                                margin = margin(r = 6)),
-    axis.text.x  = element_text(size = 9.5, colour = "#333333",
-                                lineheight = 1.4, margin = margin(t = 5)),
-    axis.text.y  = element_text(size = 10, colour = "#333333"),
-    axis.line    = element_line(colour = "#444444", linewidth = 0.45),
-    axis.ticks   = element_line(colour = "#444444"),
-    plot.margin  = margin(12, 16, 8, 10)
-  )
-
-p        # <- appears in the RStudio Plots pane
-
-## Opens a separate window at the intended size, if the Plots pane is cramped
-print_fig <- function() {
-  if (.Platform$OS.type == "windows") windows(width = 4.7, height = 5.0)
-  else if (Sys.info()[["sysname"]] == "Darwin") quartz(width = 4.7, height = 5.0)
-  else x11(width = 4.7, height = 5.0)
-  print(p)
+tr <- function(x, linthresh = mdd) {
+  if (!use_symlog) return(log10(x))
+  s <- sign(x); a <- abs(x)
+  ifelse(a <= linthresh,
+         x * (linscale_adj / linthresh),
+         s * (log10(a / linthresh) + linscale_adj))
 }
-# print_fig()
 
-## ---- export -----------------------------------------------------------------
-# ggsave("BAFF_figure.tiff", p, width = 4.7, height = 5.0, dpi = 600,
-#        compression = "lzw")
-# ggsave("BAFF_figure.pdf",  p, width = 4.7, height = 5.0)
+## ------------------------------------------------------------ 3. STATS -----
+kw <- kruskal.test(dat)
+
+## Dunn's test, tie-corrected, Benjamini-Hochberg adjusted over all six pairs.
+dunn_test <- function(x) {
+  v  <- unlist(x, use.names = FALSE)
+  g  <- rep(names(x), lengths(x))
+  N  <- length(v)
+  r  <- rank(v)
+  mr <- tapply(r, g, mean)
+  n  <- tapply(r, g, length)
+  tie    <- table(v)
+  sigma2 <- (N * (N + 1) / 12) - sum(tie^3 - tie) / (12 * (N - 1))
+  pr <- combn(names(x), 2, simplify = FALSE)
+  z  <- sapply(pr, function(p)
+    (mr[[p[1]]] - mr[[p[2]]]) / sqrt(sigma2 * (1 / n[[p[1]]] + 1 / n[[p[2]]])))
+  p  <- 2 * pnorm(-abs(z))
+  data.frame(a = sapply(pr, `[`, 1), b = sapply(pr, `[`, 2),
+             z = z, p = p, p_adj = p.adjust(p, "BH"), row.names = NULL)
+}
+
+dn <- dunn_test(dat)
+get_p <- function(g1, g2)
+  dn$p_adj[(dn$a == g1 & dn$b == g2) | (dn$a == g2 & dn$b == g1)][1]
+
+fmt_p <- function(p, eq = TRUE)
+  if (p < 0.001) "p < 0.001" else sprintf(if (eq) "p = %.3f" else "%.3f", p)
+
+cat(sprintf("Kruskal-Wallis H = %.2f, df = %d, p = %.5f\n",
+            kw$statistic, kw$parameter, kw$p.value))
+print(dn, digits = 3)
+
+## ----------------------------------------------------------- 4. GEOMETRY ---
+top <- max(unlist(dat), na.rm = TRUE)
+bot <- min(unlist(dat), na.rm = TRUE)
+all_ticks <- c(0, 10^(0:4))
+if (use_symlog) {
+  ticks <- all_ticks
+  tick_labels <- expression(0, 10^0, 10^1, 10^2, 10^3, 10^4)
+  ylim <- tr(c(-mdd * 0.35, top * 9))
+} else {
+  ticks <- all_ticks[-1]
+  tick_labels <- expression(10^0, 10^1, 10^2, 10^3, 10^4)
+  ylim <- tr(c(bot / 2, top * 9))
+}
+xlim <- c(0.4, 4.6)
+
+## whiskers as matplotlib draws them: furthest point inside 1.5 x IQR
+box_stats <- function(v) {
+  q <- quantile(v, c(.25, .5, .75), type = 7, na.rm = TRUE)
+  iqr <- q[3] - q[1]
+  lo <- min(v[v >= q[1] - 1.5 * iqr]); hi <- max(v[v <= q[3] + 1.5 * iqr])
+  c(lo = lo, q1 = q[[1]], med = q[[2]], q3 = q[[3]], hi = hi)
+}
+
+## ------------------------------------------------------------- 5. PLOT -----
+## Draws on whatever device is currently open. Called at the foot of the script
+## with no device opened first, so it lands in the RStudio Plots pane.
+
+draw_panel <- function() {
+
+op <- par(mar = c(5.2, 5.2, 5.6, 1.2), mgp = c(3.4, 0.7, 0), las = 1,
+          xaxs = "i", cex.axis = 1.0)
+on.exit(par(op), add = TRUE)
+
+plot(NA, xlim = xlim, ylim = ylim, axes = FALSE, xlab = "", ylab = "")
+
+## reference lines: kit detection limit, and zero if it is on the axis
+abline(h = tr(mdd), lty = 2, col = "#d62728", lwd = 1.4)
+if (use_symlog) abline(h = tr(0), lty = 3, col = "#555555", lwd = 1.2)
+
+set.seed(11)   # jitter only; change freely, it carries no information
+for (i in seq_along(groups)) {
+  g <- groups[i]; v <- dat[[g]]; k <- cols[[g]]
+  bs <- box_stats(v)
+
+  ## box: median and interquartile range
+  rect(i - 0.275, tr(bs[["q1"]]), i + 0.275, tr(bs[["q3"]]),
+       col = adjustcolor(k, alpha.f = 0.20), border = "#666666")
+  segments(i - 0.275, tr(bs[["med"]]), i + 0.275, tr(bs[["med"]]),
+           lwd = 2.2, col = "black")
+  ## whiskers and caps
+  segments(i, tr(bs[["q3"]]), i, tr(bs[["hi"]]), col = "#666666")
+  segments(i, tr(bs[["q1"]]), i, tr(bs[["lo"]]), col = "#666666")
+  segments(i - 0.14, tr(bs[["hi"]]), i + 0.14, tr(bs[["hi"]]), col = "#666666")
+  segments(i - 0.14, tr(bs[["lo"]]), i + 0.14, tr(bs[["lo"]]), col = "#666666")
+
+  ## every participant; filled if measured, open if below the detection limit
+  xj  <- i + runif(length(v), -0.18, 0.18)
+  det <- v > 0
+  points(xj[det],  tr(v[det]),  pch = 21, bg = k, col = "white", cex = 1.05)
+  if (any(!det))
+    points(xj[!det], tr(v[!det]), pch = 21, bg = NA, col = "#9a9a9a",
+           cex = 1.05, lwd = 1.1)
+}
+
+## axes
+axis(2, at = tr(ticks), labels = tick_labels, lwd = 0, lwd.ticks = 1)
+axis(1, at = seq_along(groups), labels = FALSE, lwd = 0, lwd.ticks = 1)
+mtext(sprintf("%s\n%d (%d)", groups, lengths(dat),
+              sapply(dat, function(v) sum(v > 0))),
+      side = 1, at = seq_along(groups), line = 1.9, cex = 1.0)
+mtext("group\nn (measured)", side = 1, line = 4.0, cex = 0.9)
+mtext(sprintf("%s (%s, %s scale)", analyte, unit,
+              if (use_symlog) "symlog" else "log"),
+      side = 2, line = 3.4, las = 0, cex = 1.05)
+box(bty = "l")
+
+## title: analyte and the omnibus test
+mtext(analyte, side = 3, line = 3.1, cex = 1.1)
+mtext(sprintf("Kruskal-Wallis H = %.2f, %s", kw$statistic, fmt_p(kw$p.value)),
+      side = 3, line = 1.9, cex = 1.1)
+
+## post-hoc brackets against healthy controls, at 1.3x / 2.6x / 5.2x the maximum
+bracket <- function(x1, x2, y, p) {
+  yt <- tr(y); yb <- tr(y * 0.93)
+  lines(c(x1, x1, x2, x2), c(yb, yt, yt, yb), col = "#666666", lwd = 1.2)
+  sig <- p < 0.05
+  text(mean(c(x1, x2)), yt, fmt_p(p), pos = 3, offset = 0.25, cex = 0.95,
+       col = if (sig) "#8b0000" else "#666666", font = if (sig) 2 else 1)
+}
+for (k in 1:3) {
+  g <- c("GBS", "MS", "SLE")[k]
+  bracket(1, which(groups == g), top * c(1.3, 2.6, 5.2)[k], get_p(g, "HC"))
+}
+
+invisible(NULL)
+}
+
+## ------------------------------------------------------------ 6. RENDER ----
+draw_panel()          # -> RStudio Plots pane; export manually from there
+
+## Optional: write the file directly instead of exporting by hand.
+## cairo_pdf("Figure_7A_BAFF.pdf", width = 5.6, height = 7); draw_panel(); dev.off()
+
+###############################################################################
+#  A note on the axis
+#
+#  The symlog scale was introduced for the censored analytes, where most samples
+#  are recorded as 0 and a plain log axis cannot show them. BAFF has no censored
+#  samples, so with use_symlog = TRUE roughly the lower half of the panel is an
+#  empty linear region spanning 0 to 2.68 pg/mL, while every actual measurement
+#  (137 to 9214 pg/mL) is compressed into the top half. Setting
+#      use_symlog <- FALSE
+#  gives a plain log10 axis, uses the whole panel for the data, and is directly
+#  comparable with Figure 1 in the workbook. The statistics are identical either
+#  way - only the axis changes. Keep TRUE if the panel must sit alongside 7B-7E
+#  on a shared axis convention.
+#
+#  Reading the data from the workbook instead of the vectors above:
+#
+#  library(readxl)
+#  d <- read_excel("Cytokine_Profile Ver3 (non-detects = 0).xlsx",
+#                  sheet = "Clean Data", skip = 3)
+#  d <- d[d$Group %in% groups, ]
+#  dat <- split(as.numeric(d$`BAFF (pg/mL)`), factor(d$Group, levels = groups))
+#  dat <- lapply(dat, function(v) v[!is.na(v)])
+###############################################################################
